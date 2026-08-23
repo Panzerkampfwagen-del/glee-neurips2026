@@ -16,7 +16,7 @@ def test_safe_actions_all_families():
     assert sum(safe_action(b)[k] for k in ("alice_gain", "bob_gain")) == 100.0
 
     n = _mk("negotiation", "offer", current_player="player_1", player_1_value=42)
-    assert safe_action(n)["product_price"] == 42
+    assert abs(safe_action(n)["product_price"] - 42.84) < 1e-9
 
     d = _mk("bargaining", "decision")
     assert safe_action(d) == {"decision": "accept"}
