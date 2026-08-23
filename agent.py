@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from glee_sdk import GleeClient
 
-from src import bargaining, negotiation, persuasion
+from src import bargaining, negotiation, persuasion, simulate
+from src import llm
 from src.opponent_model import ProfileStore
 from src.safety import validate_and_fix
 
@@ -92,7 +93,8 @@ def _negotiation_reject_rate(game: dict) -> float | None:
     return rejects / len(mine)
 
 
-def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:    family = game["game_family"]
+def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:
+    family = game["game_family"]
     if family != "negotiation":
         return None, None
     st = game["game_state"]
@@ -155,7 +157,56 @@ def strategy(game: dict) -> dict:
             raw = safe_action(game)
 
         action = validate_and_fix(game, raw)
-        logger.info("[%s %s r%s] %s -> %s", family, game["game_id"][:8],
+
+        # LLM layer: simulation-ranked candidates + drafted language on
+        # pivotal offers only — routine moves stay deterministic and free.
+        try:
+            atype = game["valid_actions"]["type"]
+            pivotal = simulate.is_pivotal(game)
+            if llm.enabled() and atype == "offer" and \
+                    family in ("bargaining", "negotiation"):
+                st = game["game_state"]
+                if family == "bargaining":
+                    cands = simulate.bargaining_candidates(
+                        st, game.get("your_player", "player_1"), raw)
+                    money = float(st["money_to_divide"])
+                    my_key = f"{game.get('your_player')}_gain"
+                    gains = [float(c[my_key]) for c in cands]
+                    best, mode = simulate.rank_offers(
+                        game, cands, "money splits (alice_gain, bob_gain)", gains)
+                else:
+                    me = game.get("your_player", "player_2")
+                    v = float(st.get(f"{me}_value") or 0)
+                    is_seller = (st.get(f"{me}_role") == "seller")
+                    z_lo, z_hi = opponent_value_interval(game)
+                    if is_seller:
+                        lo_b = v
+                        hi_b = z_hi if z_hi is not None else raw["product_price"] * 1.3
+                    else:
+                        lo_b = z_lo if z_lo is not None else raw["product_price"] * 0.7
+                        hi_b = v
+                    cands = negotiation.negotiation_candidates(
+                        v, is_seller, lo_b, hi_b,
+                        float(raw.get("product_price", v)))
+                    gains = [(c["product_price"] - v) if is_seller
+                             else max(0.0, v - c["product_price"])
+                             for c in cands]
+                    best, mode = simulate.rank_offers(
+                        game, cands, "price offers", gains)
+                if best:
+                    raw = dict(best)
+                    logger.info("[%s %s] sim-rank %s", family, game_id[:8], mode)
+            elif llm.enabled() and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
+                role = {"bargaining": "a negotiator splitting a pot under inflation",
+                        "negotiation": "a buyer or seller trading one product",
+                        "persuasion": "a seller recommending products of hidden quality"}[family]
+                drafted = simulate.draft_message(game, action, role)
+                if drafted:
+                    action["message"] = drafted
+        except Exception:
+            logger.exception("llm layer failed; keeping deterministic move")
+
+        logger.info("[%s %s r%s] %s -> %s", family, game_id[:8],
                     game.get("game_state", {}).get("round"),
                     game["valid_actions"]["type"], action)
         log_game(game, action)
