@@ -16,12 +16,14 @@ API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_FAST = os.environ.get("GLEE_LLM_FAST", "openai/gpt-oss-20b")
 MODEL_STRONG = os.environ.get("GLEE_LLM_STRONG", "openai/gpt-oss-120b")
 
-_enabled = bool(os.environ.get("GROQ_API_KEY")) and \
-    os.environ.get("GLEE_USE_LLM", "1") == "1"
+_keys = [k for k in (os.environ.get("GROQ_API_KEY"),
+                     os.environ.get("GROQ_API_KEY_2")) if k]
+_enabled = bool(_keys) and os.environ.get("GLEE_USE_LLM", "1") == "1"
 
 _lock = threading.Lock()
-_call_times: deque[float] = deque()
-RPM_CAP = 24
+_buckets: dict[str, deque] = {k: deque() for k in _keys}
+_rr = 0
+RPM_CAP = 24  # per key
 
 
 def enabled() -> bool:
@@ -29,32 +31,45 @@ def enabled() -> bool:
 
 
 def available(n: int = 1) -> bool:
-    """True if n calls can be made right now without breaching RPM cap."""
+    """True if n calls can be made right now across all key buckets."""
     now = time.time()
     with _lock:
-        while _call_times and now - _call_times[0] > 60.0:
-            _call_times.popleft()
-        return len(_call_times) + n <= RPM_CAP
+        for q in _buckets.values():
+            while q and now - q[0] > 60.0:
+                q.popleft()
+        return sum(len(q) for q in _buckets.values()) + n <= RPM_CAP * max(1, len(_buckets))
 
 
-def _take():
+def _take() -> str | None:
+    """Round-robin over keys; first bucket with headroom wins."""
+    global _rr
     now = time.time()
     with _lock:
-        while _call_times and now - _call_times[0] > 60.0:
-            _call_times.popleft()
-        if len(_call_times) >= RPM_CAP:
-            return False
-        _call_times.append(now)
-        return True
+        keys = list(_buckets)
+        if not keys:
+            return None
+        for i in range(len(keys)):
+            key = keys[(_rr + i) % len(keys)]
+            q = _buckets[key]
+            while q and now - q[0] > 60.0:
+                q.popleft()
+            if len(q) < RPM_CAP:
+                q.append(now)
+                _rr = (_rr + i + 1) % len(keys)
+                return key
+        return None
 
 
 def chat(messages: list[dict], model: str | None = None,
          timeout: float = 10.0, max_tokens: int = 300) -> str | None:
-    if not _enabled or not _take():
+    if not _enabled:
+        return None
+    api_key = _take()
+    if not api_key:
         return None
     try:
         resp = requests.post(API_URL, timeout=timeout, headers={
-            "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }, json={
             "model": model or MODEL_FAST,

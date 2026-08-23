@@ -77,10 +77,15 @@ def test_pivotal_gate():
 
 
 def test_rate_limiter_caps():
-    llm._call_times.clear()
-    ok = sum(1 for _ in range(30) if llm._take())
-    assert ok == llm.RPM_CAP
-    llm._call_times.clear()
+    from collections import deque
+    fake = {"keyA": deque(), "keyB": deque()}
+    with mock.patch.object(llm, "_buckets", fake), \
+         mock.patch.object(llm, "_enabled", True):
+        ok = sum(1 for _ in range(60) if llm._take())
+        assert ok == llm.RPM_CAP * 2
+        assert llm.available(1) is False
+    for q in fake.values():
+        q.clear()
 
 
 def test_bargaining_candidates_use_alice_bob_keys():
