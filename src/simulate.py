@@ -97,17 +97,23 @@ def summarize_history(game: dict, limit: int = 8) -> str:
     return "\n".join(lines) or "(no history yet)"
 
 
-SIM_PROMPT = """You are predicting how an opponent will respond in a 2-player \
-economic negotiation. Based on their observed behavior, estimate the \
-probability they ACCEPT each candidate offer.
+SIM_PROMPT = """You are predicting how a SPECIFIC opponent will respond in a \
+2-player economic negotiation. Judge each candidate ON ITS OWN MERITS against \
+this opponent's observed behavior — do NOT assume a pattern across candidates.
 
+Opponent's last offer/action: {last_offer}
 Opponent behavior so far:
 {history}
 
-Candidates (my proposed {target_desc}):
+My candidate {target_desc}:
 {candidates}
 
-Reply with ONLY JSON: {{"p_accept": [<number 0-1 per candidate, same order>]}}"""
+For EACH candidate consider: how far it is from what this opponent has shown \
+they want, and how it compares to their own last proposal. Candidates closer \
+to the opponent's demonstrated position are MORE likely accepted.
+
+Reply with ONLY JSON: {{"reasoning": "<1 sentence>", "p_accept": [<number 0-1 \
+per candidate, same order>]}}"""
 
 
 def rank_offers(game: dict, candidates: list[dict], target_desc: str,
@@ -118,10 +124,16 @@ def rank_offers(game: dict, candidates: list[dict], target_desc: str,
     if not llm.enabled() or len(candidates) == 1 or \
             not llm.available(len(candidates)):
         return None, "budget"
+    st = game.get("game_state") or {}
+    last = st.get("last_offer") or {}
+    last_desc = json_dumps({k: v for k, v in last.items()
+                            if k in ("price", "player_1_gain", "player_2_gain",
+                                     "from_player", "proposer")}) or "none yet"
     prompt = SIM_PROMPT.format(
         history=summarize_history(game),
         target_desc=target_desc,
         candidates="\n".join(f"{i+1}. {json_dumps(c)}" for i, c in enumerate(candidates)),
+        last_offer=last_desc,
     )
     messages = [
         {"role": "system", "content":
@@ -129,7 +141,7 @@ def rank_offers(game: dict, candidates: list[dict], target_desc: str,
         {"role": "user", "content": prompt},
     ]
     with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
-        futures = [pool.submit(llm.json_chat, messages, None, timeout_per_call, 120)
+        futures = [pool.submit(llm.json_chat, messages, None, timeout_per_call, 1200)
                    for _ in range(1)]
         probs = None
         for f in futures:
@@ -173,7 +185,7 @@ def draft_message(game: dict, action: dict, role_desc: str) -> str | None:
             role=role_desc, family=game["game_family"],
             action=json_dumps({k: v for k, v in action.items() if k != "message"}),
             context=context)},
-    ], timeout=8.0, max_tokens=80)
+    ], timeout=10.0, max_tokens=900)
     if not text:
         return None
     text = text.strip().strip('"').strip()
