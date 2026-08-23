@@ -43,7 +43,7 @@ def compile_bargaining(game: dict) -> BargainingState:
         round=int(s.get("round", 1)),
         max_rounds=s.get("max_rounds"),
         horizon_known=bool(s.get("horizon_known", True)),
-        delta_me=float(s[f"delta_{me.split('_')[1]}"]),
+        delta_me=float(s.get(f"delta_{me.split('_')[1]}", 0.9)),
         my_player=me,
         current_player=s.get("current_player", ""),
         proposer=s.get("proposer"),

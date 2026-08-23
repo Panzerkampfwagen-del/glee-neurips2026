@@ -23,7 +23,8 @@ def safe_action(game: dict) -> dict:
         if value is None:
             value = (state.get("player_1_value") if me == "player_1"
                      else state.get("player_2_value", 10.0))
-        return {"product_price": float(value)}
+        # small pad so the fallback is strictly profitable when we're seller
+        return {"product_price": float(value) * 1.02}
     if action_type == "seller_message":
         return {"message": "I recommend this product."}
 

@@ -6,6 +6,7 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -46,6 +47,18 @@ class AgentState:
 
 
 STATE = AgentState()
+GAME_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "games.jsonl")
+
+
+def log_game(game: dict, action: dict):
+    """Full replay material for forensics — schema surprises get caught here."""
+    try:
+        os.makedirs(os.path.dirname(GAME_LOG), exist_ok=True)
+        with open(GAME_LOG, "a") as f:
+            f.write(json.dumps({"t": game.get("game_id"), "s": game.get("game_state"),
+                                "a": action}) + "\n")
+    except Exception:
+        pass
 
 
 def update_tracker_from_history(game_id: str, game: dict):
@@ -104,6 +117,7 @@ def strategy(game: dict) -> dict:
         logger.info("[%s %s r%s] %s -> %s", family, game["game_id"][:8],
                     game.get("game_state", {}).get("round"),
                     game["valid_actions"]["type"], action)
+        log_game(game, action)
         return action
 
     except Exception:

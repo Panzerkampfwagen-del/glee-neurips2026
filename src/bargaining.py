@@ -73,6 +73,8 @@ def decide(game: dict, opp_delta_hat: float = DEFAULT_DELTA_OPP_PRIOR,
     action_type = game["valid_actions"]["type"]
 
     rl = max(1, st.rounds_left) if st.horizon_known and st.rounds_left else None
+    if st.horizon_known and st.rounds_left is not None and st.rounds_left <= 0:
+        rl = 1
     sol = solve_thresholds(st.delta_me, opp_delta_hat, money, rl)
 
     if action_type == "offer":
