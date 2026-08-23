@@ -7,7 +7,7 @@ LOG=${1:-/tmp/opencode/live_supervised.log}
 while true; do
   echo "[$(date -Is)] launching agent" >> "$LOG"
   GLEE_API_KEY=***REMOVED*** \
-    /home/aryan/glee-comp/.venv/bin/python agent.py --concurrency 6 --max-time 3600 \
+    /home/aryan/glee-comp/.venv/bin/python agent.py --concurrency 8 --max-time 1800 \
     >> "$LOG" 2>&1
   echo "[$(date -Is)] agent exited code=$?" >> "$LOG"
   if tail -5 "$LOG" | grep -q "timed out"; then
