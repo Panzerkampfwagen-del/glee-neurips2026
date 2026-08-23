@@ -138,14 +138,38 @@ def test_regression_a9919bf1_no_death_spiral_after_single_burn():
     assert persuasion.buyer_decide(game)["decision"] == "yes"
 
 
-def test_buyer_still_boycotts_active_liar():
+def test_buyer_constant_signal_ignores_burn_history():
+    """Always-yes seller = UNINFORMATIVE signal. Quality draws are independent
+    of the message; base-rate EV rules and burns must not cause lockout."""
     hist = [
         {"round": r, "bought": True, "quality": "low", "seller_message": "yes"}
         for r in (1, 2, 3)
     ]
     game = _mk_game(False, "buyer_decision", price=100.0, p=0.5,
                     v=300.0, history=hist, round_=4, total=20)
+    # EV = 0.5*300 = 150 > 100 -> keep buying despite 3 straight burns
+    assert persuasion.buyer_decide(game)["decision"] == "yes"
+
+
+def test_buyer_boycotts_informative_liar():
+    """Seller's claims VARY (informative regime) and our yes-purchases came
+    out low twice in a row -> tripled evidence bar suppresses buying."""
+    hist = [
+        {"round": 1, "bought": False, "seller_message": "no"},
+        {"round": 2, "bought": True, "quality": "low", "seller_message": "yes"},
+        {"round": 3, "bought": True, "quality": "low", "seller_message": "yes"},
+    ]
+    game = _mk_game(False, "buyer_decision", price=100.0, p=0.5,
+                    v=300.0, history=hist, round_=4, total=20)
     assert persuasion.buyer_decide(game)["decision"] == "no"
+
+
+def test_signal_regime_classification():
+    assert persuasion.signal_regime([]) == "unknown"
+    const_yes = [{"seller_message": "yes"} for _ in range(4)]
+    assert persuasion.signal_regime(const_yes) == "uninformative"
+    mixed = [{"seller_message": m} for m in ("yes", "no", "yes", "no")]
+    assert persuasion.signal_regime(mixed) == "informative"
 
 
 def test_buyer_rewards_selective_honesty():

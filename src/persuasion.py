@@ -170,9 +170,34 @@ def estimate_v(history: list, price: float, p: float) -> float:
     return (price / max(p, 0.1)) * 1.2
 
 
+def signal_regime(history: list) -> str:
+    """'uninformative' if the seller's claims are effectively constant —
+    a constant signal carries zero information, so P(high) stays at the base
+    rate p and purchase history must NOT shift our belief (the seller cannot
+    influence quality draws). 'informative' = varying claims. 'unknown' =
+    too few classified rounds."""
+    known = [c for c in (_claim_of(e) for e in history or [])
+             if c is not None]
+    if len(known) < 3:
+        return "unknown"
+    yes_rate = sum(known) / len(known)
+    if yes_rate >= 0.95 or yes_rate <= 0.05:
+        return "uninformative"
+    return "informative"
+
+
 def buyer_decide(game: dict) -> dict:
     st = compile_persuasion(game)
     history = st.history or []
+    regime = signal_regime(history)
+
+    # Uninformative seller: quality draws are independent of their constant
+    # claim — no posteriors, no streaks, no endgame suspicion (none of it
+    # applies when the message carries no information about this round).
+    if regime == "uninformative":
+        v_hat = st.v if st.v is not None else estimate_v(history, st.price, st.p)
+        ev = st.p * v_hat + (1.0 - st.p) * st.u
+        return {"decision": "yes" if ev > st.price else "no"}
 
     last = history[-1] if history else {}
     claimed_yes = _claim_of(last)
@@ -182,10 +207,9 @@ def buyer_decide(game: dict) -> dict:
     w_emp = n_eff / (n_eff + 1.5)
     p_hat = (1 - w_emp) * st.p + w_emp * beta.mean
 
-    # Recency-limited deception penalty: a low-quality purchase among the last
-    # two buys is evidence of active misrepresentation, but it must fade —
-    # otherwise one early burn locks us out of profitable configs forever
-    # (live bug a9919bf1: bought 2/20 on an EV-favorable config).
+    # Recency-limited deception penalty (informative regime only): a low
+    # purchase among the last two buys suggests their differentiated claims
+    # are polluted — but it must fade, else one burn locks us out forever.
     recent_buys = [e for e in history if e.get("bought")][-2:]
     if any(e.get("quality") == "low" for e in recent_buys):
         p_hat *= 0.8
@@ -193,8 +217,8 @@ def buyer_decide(game: dict) -> dict:
     v_hat = st.v if st.v is not None else estimate_v(history, st.price, st.p)
     ev = p_hat * v_hat + (1.0 - p_hat) * st.u
 
-    # Two consecutive low-quality purchases on our buys = near-certain active
-    # liar: demand far stronger evidence before spending again.
+    # Two consecutive low purchases on our buys while their claims varied:
+    # near-certain active liar — demand far stronger evidence.
     margin = _buy_margin(st.rounds_left)
     bought_seq = [e for e in history if e.get("bought")]
     if len(bought_seq) >= 2 and all(
