@@ -48,15 +48,16 @@ def bargaining_candidates(state: dict, me: str, base_action: dict,
                           n: int = 5) -> list[dict]:
     """Variants around the solver target: ±concession nudges on my gain."""
     money = float(state["money_to_divide"])
-    key = f"{me}_gain"
-    opp_key = "bob_gain" if key == "alice_gain" else "alice_gain"
-    mine = float(base_action[key])
+    # offer actions are keyed by alice/bob, not player_1/player_2
+    my_key = "alice_gain" if me == "player_1" else "bob_gain"
+    opp_key = "bob_gain" if my_key == "alice_gain" else "alice_gain"
+    mine = float(base_action[my_key])
     out = []
     for delta in (-0.06, -0.03, 0.0, 0.03, 0.06)[:max(3, n)]:
         m = min(max(mine * (1.0 + delta), money * 0.05), money * 0.95)
-        a = {key: round(m, 2), opp_key: round(money - m, 2)}
-        if abs(a[key] + a[opp_key] - money) > 1e-6:
-            a[opp_key] = round(money - a[key], 6)
+        a = {my_key: round(m, 2), opp_key: round(money - m, 2)}
+        if abs(a[my_key] + a[opp_key] - money) > 1e-6:
+            a[opp_key] = round(money - a[my_key], 6)
         out.append(a)
     return out
 

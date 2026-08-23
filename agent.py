@@ -185,7 +185,7 @@ def strategy(game: dict) -> dict:
                     else:
                         lo_b = z_lo if z_lo is not None else raw["product_price"] * 0.7
                         hi_b = v
-                    cands = negotiation.negotiation_candidates(
+                    cands = simulate.negotiation_candidates(
                         v, is_seller, lo_b, hi_b,
                         float(raw.get("product_price", v)))
                     gains = [(c["product_price"] - v) if is_seller

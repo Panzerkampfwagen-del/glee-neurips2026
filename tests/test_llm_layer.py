@@ -81,3 +81,25 @@ def test_rate_limiter_caps():
     ok = sum(1 for _ in range(30) if llm._take())
     assert ok == llm.RPM_CAP
     llm._call_times.clear()
+
+
+def test_bargaining_candidates_use_alice_bob_keys():
+    state = {"money_to_divide": 1000.0}
+    base = {"alice_gain": 580.0, "bob_gain": 420.0}
+    cands = simulate.bargaining_candidates(state, "player_1", base, n=3)
+    assert len(cands) == 3
+    for c in cands:
+        assert abs(c["alice_gain"] + c["bob_gain"] - 1000.0) < 1e-6
+    # player_2 perspective keys flip correctly
+    base2 = {"alice_gain": 420.0, "bob_gain": 580.0}
+    cands2 = simulate.bargaining_candidates(state, "player_2", base2, n=3)
+    for c in cands2:
+        assert abs(c["alice_gain"] + c["bob_gain"] - 1000.0) < 1e-6
+
+
+def test_agent_imports_candidates_from_simulate():
+    import agent as agent_mod
+    import inspect
+    src = inspect.getsource(agent_mod)
+    assert "negotiation.negotiation_candidates" not in src
+    assert "simulate.negotiation_candidates" in src
