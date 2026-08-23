@@ -66,6 +66,7 @@ class NegotiationState:
     last_offer: dict | None
     complete_information: bool
     messages_allowed: bool
+    opp_value: float | None = None
     history: list = field(default_factory=list)
 
     @property
@@ -100,6 +101,13 @@ def compile_negotiation(game: dict) -> NegotiationState:
         my_value = float(s["player_1_value"] if role == "seller" and me == "player_1"
                          else s["player_2_value"] if role == "buyer" and me == "player_2"
                          else s.get("player_1_value", 0.0))
+    opp = "player_2" if me == "player_1" else "player_1"
+    opp_value = None
+    if s.get("complete_information"):
+        try:
+            opp_value = float(s[f"{opp}_value"])
+        except (KeyError, TypeError, ValueError):
+            opp_value = None
     return NegotiationState(
         role=role,
         my_value=my_value,
@@ -111,6 +119,7 @@ def compile_negotiation(game: dict) -> NegotiationState:
         last_offer=s.get("last_offer"),
         complete_information=bool(s.get("complete_information", True)),
         messages_allowed=bool(s.get("messages_allowed", False)),
+        opp_value=opp_value,
         history=list(s.get("history") or []),
     )
 

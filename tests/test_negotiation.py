@@ -39,13 +39,17 @@ def test_buyer_opener_below_value():
 
 
 def test_interval_tightening_from_history():
+    # Seller asks 90; WE (buyer) reject it -> only a hi bound on their value.
     hist = [
-        {"offer": {"price": 90, "from_player": "player_1"}, "decision": "RejectOffer",
-         "counteroffer": 40},
+        {"round": 1, "offer": {"price": 90, "from_player": "player_1"},
+         "decision": "RejectOffer", "decided_by": "player_2"},
+        {"round": 2, "offer": {"price": 40, "from_player": "player_2"},
+         "decision": "RejectOffer", "decided_by": "player_1"},
     ]
     lo, hi = negotiation.estimate_opponent_interval(hist, "buyer", prior_lo=0.0,
                                                     prior_hi=None)
-    assert hi <= 103.5 and lo >= 36.0
+    assert hi <= 103.5
+    assert lo >= 36.0
 
 
 def test_buyer_walkaway_on_certain_negative_surplus():

@@ -108,3 +108,49 @@ def test_bargaining_opener_concedes_field_minimum():
     a = bargaining.decide(game, type_confidence=0.0)
     conceded_to_p2 = a["bob_gain"] / money
     assert conceded_to_p2 >= bargaining.FIELD_MIN_CONCESSION - 1e-9
+
+
+def test_regression_c697c812_no_walkaway_with_visible_surplus():
+    """Live game c697c812: complete info, surplus [12000,15000], seller asked
+    24000/22800 — old estimator inflated their floor off their own asks and
+    walked away. Must counter near the fair split instead."""
+    game = {
+        "game_family": "negotiation", "your_player": "player_2", "game_id": "x",
+        "valid_actions": {"type": "decision",
+                          "fields": {"decision": "'AcceptOffer', 'RejectOffer', or 'WalkAway'",
+                                     "product_price": "number"}},
+        "game_state": {
+            "round": 3, "max_rounds": 10, "horizon_known": True,
+            "current_player": "player_2",
+            "player_1_role": "seller", "player_2_role": "buyer",
+            "player_1_value": 12000.0, "player_2_value": 15000.0,
+            "complete_information": True, "messages_allowed": False,
+            "last_offer": {"price": 22800.0, "from_player": "player_1", "round": 3},
+            "history": [
+                {"round": 1, "offer": {"price": 24000.0, "from_player": "player_1"},
+                 "decision": "RejectOffer", "decided_by": "player_2"},
+                {"round": 2, "offer": {"price": 12753.0, "from_player": "player_2"},
+                 "decision": "RejectOffer", "decided_by": "player_1"},
+            ],
+        },
+    }
+    a = negotiation.decide(game)
+    assert a["decision"] == "RejectOffer"
+    assert 12500 <= a["product_price"] <= 14600
+
+
+def test_interval_estimator_rejection_semantics():
+    hist = [
+        {"round": 1, "offer": {"price": 100.0, "from_player": "player_2"},
+         "decision": "RejectOffer", "decided_by": "player_1"},
+    ]
+    lo, hi = negotiation.estimate_opponent_interval(hist, "seller")
+    assert lo >= 85.0 and hi == float("inf")
+
+    hist2 = [
+        {"round": 1, "offer": {"price": 90.0, "from_player": "player_1"},
+         "decision": "RejectOffer", "decided_by": "player_2"},
+    ]
+    lo2, hi2 = negotiation.estimate_opponent_interval(hist2, "buyer")
+    assert hi2 <= 103.5
+    assert lo2 < 50.0

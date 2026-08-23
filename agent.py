@@ -52,16 +52,14 @@ def update_tracker_from_history(game_id: str, game: dict):
     st = game.get("game_state") or {}
     history = st.get("history") or []
     me = game.get("your_player", "player_1")
+    opp = "player_2" if me == "player_1" else "player_1"
+    money = float(st.get("money_to_divide") or 1.0)
     tracker = STATE.tracker(game_id)
     for entry in history:
-        decision = entry.get("decision")
-        offer = entry.get("offer") or {}
-        proposer = entry.get("proposer")
-        if decision in ("reject", "rejected") and proposer and proposer != me:
-            money = st.get("money_to_divide", 1.0) or 1.0
-            gain_key = f"{proposer == me and ('player_1' if me == 'player_1' else 'player_2') or 'opponent'}_gain"
+        if entry.get("decision") in ("reject", "rejected") and \
+                entry.get("proposer") not in (None, me):
             try:
-                their_gain = float(offer.get(f"{'player_2' if me == 'player_1' else 'player_1'}_gain", 0.0))
+                their_gain = float((entry.get("offer") or {}).get(f"{opp}_gain", 0.0))
                 tracker.observe_rejection(their_gain / money)
             except (TypeError, ValueError):
                 pass
@@ -103,11 +101,9 @@ def strategy(game: dict) -> dict:
             raw = safe_action(game)
 
         action = validate_and_fix(game, raw)
-
-        opp_name = (game.get("opponent") or {}).get("name")
-        profile = STATE.profiles.get(opp_name)
-        if profile is not None:
-            profile.games_seen += 0
+        logger.info("[%s %s r%s] %s -> %s", family, game["game_id"][:8],
+                    game.get("game_state", {}).get("round"),
+                    game["valid_actions"]["type"], action)
         return action
 
     except Exception:
@@ -135,14 +131,6 @@ def main():
 
     logger.info("stats: %s", client.stats())
 
-    def wrapped_strategy(game: dict) -> dict:
-        try:
-            return strategy(game)
-        finally:
-            result = game.get("_last_result")
-            if result is not None:
-                STATE.cleanup(game["game_id"])
-
     kwargs = {"concurrency": args.concurrency, "poll_interval": args.poll_interval}
     if args.max_time:
         kwargs["max_time"] = args.max_time
@@ -150,7 +138,7 @@ def main():
         kwargs["max_games"] = args.max_games
 
     try:
-        client.run(wrapped_strategy, game_families=args.families, **kwargs)
+        client.run(strategy, game_families=args.families, **kwargs)
     finally:
         STATE.profiles.save()
         logger.info("profiles saved")

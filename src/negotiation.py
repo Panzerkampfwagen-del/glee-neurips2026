@@ -23,34 +23,42 @@ def _round_odd(x: float) -> float:
 def estimate_opponent_interval(history: list, role: str,
                                prior_lo: float = 0.0,
                                prior_hi: float | None = None) -> tuple[float, float]:
-    """Return [lo, hi] bounds on opponent's value.
-    We are seller -> estimating buyer max: their bids b imply b <= v_b? No:
-    a buyer bids hoping to pay less; their true max >= bid. Rejections of our
-    ask a imply v_b < a. Acceptance of a implies v_b >= a."""
+    """Return [lo, hi] bounds on opponent's private value.
+
+    Semantics matter (live-bug 2026-08-23): only the OPPONENT's own offers and
+    the OPPONENT's responses to OUR offers are evidence.
+      We are seller -> estimating buyer max v_b:
+        their bid b          => v_b >= ~b          (lo bound)
+        they reject our ask a => v_b < a           (hi bound)
+        they accept our ask a => v_b >= a          (lo bound)
+      Symmetric when we are buyer estimating seller min v_s."""
     lo, hi = prior_lo, prior_hi if prior_hi is not None else float("inf")
     i_am_seller = role == "seller"
+    opp = "player_2" if i_am_seller else "player_1"
     for entry in history or []:
-        decision = entry.get("decision")
-        counter = entry.get("counteroffer")
         offer = entry.get("offer") or {}
         price = offer.get("price") if isinstance(offer, dict) else None
-        from_player = offer.get("from_player") if isinstance(offer, dict) else None
+        frm = offer.get("from_player") if isinstance(offer, dict) else None
+        decision = entry.get("decision")
+        decider = entry.get("decided_by")
 
-        if i_am_seller:
-            if isinstance(counter, (int, float)) and counter > 0:
-                lo = max(lo, float(counter) * 0.9)
-            elif price is not None and from_player == "player_2":
+        if isinstance(price, (int, float)) and frm == opp and price > 0:
+            if i_am_seller:
                 lo = max(lo, float(price) * 0.85)
-            if decision == "RejectOffer" and price is not None:
+            else:
                 hi = min(hi, float(price) * 1.15)
-        else:
-            if isinstance(price, (int, float)) and from_player == "player_1":
-                hi = min(hi, float(price) * 1.15)
-                lo = max(lo, float(price) * 0.5)
-            if isinstance(counter, (int, float)):
-                hi = min(hi, float(counter))
-            if decision == "RejectOffer" and price is not None:
-                lo = max(lo, float(price) * 0.9)
+
+        if isinstance(price, (int, float)) and decider == opp:
+            if str(decision).lower().startswith("reject"):
+                if i_am_seller:
+                    hi = min(hi, float(price))
+                else:
+                    lo = max(lo, float(price) * 0.92)
+            elif str(decision).lower().startswith("accept"):
+                if i_am_seller:
+                    lo = max(lo, float(price))
+                else:
+                    hi = min(hi, float(price))
     return lo, hi
 
 
@@ -61,6 +69,17 @@ def opener(my_value: float, is_seller: bool, complete_information: bool,
         return _round_odd((mid + my_value * (1.4 if is_seller else 0.7)) / 2)
     mult = 2.1 if is_seller else 0.45
     return _round_odd(my_value * mult)
+
+
+def _min_capture(rounds_left: int | None, known_opp: bool) -> float:
+    """Minimum share of estimated surplus we demand before accepting.
+    Decays toward the endgame; complete information lets us hold firmer."""
+    if rounds_left is not None and rounds_left <= 1:
+        return 0.0
+    base = 0.35 if known_opp else 0.2
+    if rounds_left is not None:
+        base *= min(1.0, (rounds_left - 1) / 4.0 + 0.3)
+    return max(0.0, base)
 
 
 def seller_floor_from_history(history: list) -> float | None:
@@ -83,7 +102,15 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
 
     lo_hat, hi_hat = opp_value_hat if opp_value_hat else (None, None)
 
-    if st.is_seller:
+    # Complete information: both values visible — play the near-optimal split.
+    if st.complete_information and st.opp_value is not None:
+        fair = (v + st.opp_value) / 2.0
+        if st.is_seller:
+            z_lo, z_hi = v, max(st.opp_value, v)
+        else:
+            z_lo = min(st.opp_value, v)
+            z_hi = v
+    elif st.is_seller:
         z_lo = v
         z_hi = hi_hat if hi_hat is not None else v * 1.8
     else:
@@ -91,10 +118,13 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
         z_hi = v
 
     surplus_est = z_hi - z_lo
+    fair = ((v + z_hi) / 2.0) if st.is_seller else ((z_lo + v) / 2.0)
+    if st.complete_information and st.opp_value is not None:
+        fair = (v + st.opp_value) / 2.0
 
     if action_type == "offer":
-        if st.complete_information:
-            target = (v + (z_hi if st.is_seller else z_lo)) / 2 if surplus_est > 0 else v
+        if st.complete_information and st.opp_value is not None:
+            target = fair
         else:
             last = st.last_offer.get("price") if st.last_offer else None
             urgent = st.horizon_known and st.rounds_left is not None and st.rounds_left <= 2
@@ -134,38 +164,45 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
 
         final = st.is_final_round
         squeeze_room = (st.rounds_left is None) or (st.rounds_left > 2)
+        known_opp = st.complete_information and st.opp_value is not None
 
         if st.is_seller:
             ir = price >= v
-            firm = _firmness(st.history)
-            if ir and (not squeeze_room or price >= v * 1.02 or firm):
+            capture = ((price - z_lo) / surplus_est) if surplus_est > 0 else 1.0
+            want = capture >= _min_capture(st.rounds_left, known_opp)
+            if ir and (want or not squeeze_room or _firmness(st.history)):
                 return {"decision": "AcceptOffer"}
             if final:
-                if ir:
-                    return {"decision": "AcceptOffer"}
-                return {"decision": "RejectOffer"}
-            counter = _round_odd(max(v, (price / 0.92 + z_hi) / 2 if hi_hat else price * 1.18))
-            action = {"decision": "RejectOffer", "product_price": counter}
+                return {"decision": "AcceptOffer" if ir else "RejectOffer"}
+            counter = fair if known_opp else _round_odd(
+                max(v, (price / 0.92 + z_hi) / 2 if hi_hat else price * 1.18))
+            action = {"decision": "RejectOffer", "product_price": _round_odd(counter)}
             if st.messages_allowed:
                 action["message"] = _negotiation_message(st, counter)
             return action
 
         ir = price <= v
-        if ir and (not squeeze_room or price <= v * 0.98):
+        capture = ((z_hi - price) / surplus_est) if surplus_est > 0 else 1.0
+        want = capture >= _min_capture(st.rounds_left, known_opp)
+        if ir and (want or not squeeze_room):
             return {"decision": "AcceptOffer"}
         if final:
-            if ir:
-                return {"decision": "AcceptOffer"}
-            return {"decision": "RejectOffer"}
+            return {"decision": "AcceptOffer" if ir else "RejectOffer"}
 
-        if lo_hat is not None and lo_hat > v * 1.05:
+        # Walk away only on near-certain negative surplus.
+        neg_surplus = (known_opp and st.opp_value > v) or \
+            (lo_hat is not None and lo_hat > v * 1.05)
+        if neg_surplus:
             return {"decision": "WalkAway"}
         floor = seller_floor_from_history(st.history)
         if floor is not None and st.rounds_left is not None and st.rounds_left <= 3 \
                 and floor > v * 1.02:
             return {"decision": "WalkAway"}
-        counter = _round_odd(min(v, price * 1.06 if price and price < v else v * 0.85))
-        action = {"decision": "RejectOffer", "product_price": counter}
+        if known_opp:
+            counter = fair
+        else:
+            counter = _round_odd(min(v, price * 1.06 if price and price < v else v * 0.85))
+        action = {"decision": "RejectOffer", "product_price": _round_odd(counter)}
         if st.messages_allowed:
             action["message"] = _negotiation_message(st, counter)
         return action
