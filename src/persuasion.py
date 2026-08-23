@@ -17,23 +17,38 @@ MID_EXPLOIT = 0.15
 class SellerPolicy:
     """Per-game seller state machine."""
 
-    def __init__(self):
-        self.burned_then_bought = False
-        self.burned_then_passed = False
+    def __init__(self, seed_kind: str | None = None):
+        self.burned_then_bought = seed_kind == "myopic"
+        self.burned_then_passed = seed_kind == "bayesian"
         self.recents: list[tuple[bool, str | None]] = []
+        self.pass_streak = 0
+
+    def fresh(self) -> bool:
+        """True until any in-game observation — profile seeds only apply then."""
+        return not self.recents
 
     def observe(self, history: list):
         info = infer_seller_type(history)
-        self.burned_then_bought = info["burned_then_bought"]
-        self.burned_then_passed = info["burned_then_passed"]
+        if info["kind"] != "unknown":
+            self.burned_then_bought = info["burned_then_bought"]
+            self.burned_then_passed = info["burned_then_passed"]
         for entry in (history or [])[-5:]:
             bought = entry.get("bought")
             if bought:
                 self.recents.append((True, entry.get("quality")))
             elif bought is False:
                 self.recents.append((False, None))
+        # Recovery mode: a buyer passing repeatedly is re-earning trust only
+        # from honest rounds — stop exploiting entirely until they return.
+        self.pass_streak = 0
+        for entry in reversed(history or []):
+            if entry.get("bought"):
+                break
+            self.pass_streak += 1
 
     def exploit_rate(self, rounds_left: int) -> float:
+        if self.pass_streak >= 3:
+            return 0.0
         if self.burned_then_bought and not self.burned_then_passed:
             return 0.95
         if self.burned_then_passed or len(self.recents) < 2:
@@ -69,9 +84,10 @@ class SellerPolicy:
         return {"message": msg}
 
 
-def seller_decide(game: dict, policy: SellerPolicy | None = None) -> dict:
+def seller_decide(game: dict, policy: SellerPolicy | None = None,
+                  seed_kind: str | None = None) -> dict:
     st = compile_persuasion(game)
-    policy = policy or SellerPolicy()
+    policy = policy or SellerPolicy(seed_kind=seed_kind)
     policy.observe(st.history)
     rl = st.rounds_left
 
@@ -189,8 +205,9 @@ def buyer_decide(game: dict) -> dict:
     return {"decision": decision}
 
 
-def decide(game: dict, policy: SellerPolicy | None = None) -> dict:
+def decide(game: dict, policy: SellerPolicy | None = None,
+           seed_kind: str | None = None) -> dict:
     st = compile_persuasion(game)
     if st.am_seller:
-        return seller_decide(game, policy)
+        return seller_decide(game, policy, seed_kind=seed_kind)
     return buyer_decide(game)

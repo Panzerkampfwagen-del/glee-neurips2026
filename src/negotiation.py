@@ -63,12 +63,22 @@ def estimate_opponent_interval(history: list, role: str,
 
 
 def opener(my_value: float, is_seller: bool, complete_information: bool,
-           opp_hint: float | None = None) -> float:
+           opp_hint: float | None = None,
+           aggression_scale: float = 1.0) -> float:
+    """aggression_scale: >1 anchors harder vs pushovers, <1 softens vs
+    opponents who punish aggressive openers (profile-derived)."""
+    scale = min(max(aggression_scale, 0.8), 1.2)
     if complete_information:
         mid = opp_hint if opp_hint is not None else my_value * (1.6 if is_seller else 0.55)
         return _round_odd((mid + my_value * (1.4 if is_seller else 0.7)) / 2)
-    mult = 2.1 if is_seller else 0.45
-    return _round_odd(my_value * mult)
+    mult = (2.1 if is_seller else 0.45)
+    mult = 1 + (mult - 1) * scale if is_seller else 1 - (1 - mult) * scale
+    raw = my_value * mult
+    if is_seller:
+        raw = min(max(raw, my_value * 1.02), my_value * 3.5)
+    else:
+        raw = min(max(raw, my_value * 0.2), my_value * 0.98)
+    return _round_odd(raw)
 
 
 def _min_capture(rounds_left: int | None, known_opp: bool) -> float:
@@ -95,7 +105,8 @@ def seller_floor_from_history(history: list) -> float | None:
 
 
 def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
-           type_confidence: float = 0.0) -> dict:
+           type_confidence: float = 0.0,
+           aggression_scale: float = 1.0) -> dict:
     st = compile_negotiation(game)
     action_type = game["valid_actions"]["type"]
     v = st.my_value
@@ -131,7 +142,8 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
 
             if last is None:
                 target = opener(v, st.is_seller, False,
-                                opp_hint=(hi_hat if st.is_seller else lo_hat))
+                                opp_hint=(hi_hat if st.is_seller else lo_hat),
+                                aggression_scale=aggression_scale)
             elif st.is_seller:
                 # concede toward the estimated buyer max, never below our value
                 anchor = max(v, last * 0.9)
@@ -148,7 +160,8 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
                     concession = min(v, max(last * (1.06 if urgent else 1.02), (last + v) / 2))
                     target = concession
                 else:
-                    target = opener(v, False, False)
+                    target = opener(v, False, False,
+                                    aggression_scale=aggression_scale)
         price = _round_odd(max(target, 1.0))
         action = {"product_price": price}
         if st.messages_allowed:

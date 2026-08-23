@@ -74,7 +74,7 @@ class IntervalEstimator:
 class OpponentProfile:
     """Cross-game profile for one named opponent (identity-disclosed games)."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, name: str):
         self.name = name
@@ -83,6 +83,9 @@ class OpponentProfile:
         self.reliability = DecayedBeta(decay=0.7)
         self.deception_prior = {"human": 0.3, "frontier_llm": 0.5, "small_model": 0.6}
         self.concession_slope_ema: float | None = None
+        self.implied_delta: float | None = None
+        self.reject_rate: float | None = None
+        self.buyer_kind: str | None = None
         self.notes: list[str] = []
 
     def to_dict(self) -> dict:
@@ -93,6 +96,9 @@ class OpponentProfile:
             "accept_speed": [self.accept_speed.alpha, self.accept_speed.beta],
             "reliability": [self.reliability.alpha, self.reliability.beta],
             "concession_slope_ema": self.concession_slope_ema,
+            "implied_delta": self.implied_delta,
+            "reject_rate": self.reject_rate,
+            "buyer_kind": self.buyer_kind,
             "notes": self.notes[-20:],
         }
 
@@ -105,6 +111,9 @@ class OpponentProfile:
         r = d.get("reliability", [1.0, 1.0])
         p.reliability = DecayedBeta(r[0], r[1])
         p.concession_slope_ema = d.get("concession_slope_ema")
+        p.implied_delta = d.get("implied_delta")
+        p.reject_rate = d.get("reject_rate")
+        p.buyer_kind = d.get("buyer_kind")
         p.notes = d.get("notes", [])
         return p
 

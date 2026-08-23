@@ -78,8 +78,21 @@ def update_tracker_from_history(game_id: str, game: dict):
                 pass
 
 
-def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:
-    family = game["game_family"]
+def _negotiation_reject_rate(game: dict) -> float | None:
+    """Fraction of OUR offers the opponent rejected (aggression proxy)."""
+    st = game.get("game_state") or {}
+    me = game.get("your_player", "player_1")
+    opp = "player_2" if me == "player_1" else "player_1"
+    mine = [h for h in (st.get("history") or [])
+            if (h.get("offer") or {}).get("from_player") == me]
+    if not mine:
+        return None
+    rejects = sum(1 for h in mine
+                  if str(h.get("decision", "")).lower().startswith("reject"))
+    return rejects / len(mine)
+
+
+def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:    family = game["game_family"]
     if family != "negotiation":
         return None, None
     st = game["game_state"]
@@ -98,17 +111,45 @@ def strategy(game: dict) -> dict:
     try:
         family = game["game_family"]
         game_id = game["game_id"]
+        opp_name = (game.get("opponent") or {}).get("name")
+        profile = STATE.profiles.get(opp_name)
 
         if family == "bargaining":
             update_tracker_from_history(game_id, game)
             tracker = STATE.tracker(game_id)
-            raw = bargaining.decide(game, opp_delta_hat=tracker.delta_hat())
+            delta_hat = tracker.delta_hat()
+            if profile is not None and profile.implied_delta:
+                w = min(0.5, profile.games_seen / 10.0)
+                delta_hat = (1 - w) * delta_hat + w * profile.implied_delta
+            raw = bargaining.decide(game, opp_delta_hat=delta_hat)
+            if profile is not None:
+                profile.implied_delta = round(tracker.delta_hat(), 3)
         elif family == "negotiation":
             lo, hi = opponent_value_interval(game)
-            raw = negotiation.decide(game, opp_value_hat=(lo, hi))
+            scale = 1.0
+            if profile is not None and profile.reject_rate is not None \
+                    and profile.games_seen >= 2:
+                scale = 1.0 + 0.4 * (0.5 - profile.reject_rate)
+            raw = negotiation.decide(game, opp_value_hat=(lo, hi),
+                                     aggression_scale=scale)
+            if profile is not None:
+                rr = _negotiation_reject_rate(game)
+                if rr is not None:
+                    old = profile.reject_rate
+                    profile.reject_rate = round(rr, 3) if old is None \
+                        else round(0.7 * old + 0.3 * rr, 3)
         elif family == "persuasion":
+            seed = profile.buyer_kind if profile else None
             policy = STATE.seller_policy(game_id)
-            raw = persuasion.decide(game, policy=policy)
+            raw = persuasion.decide(game, policy=policy,
+                                    seed_kind=seed if policy.fresh() else None)
+            if profile is not None and policy.burned_then_bought:
+                pass  # kind inferred in-game; persisted below via history kind
+            if profile is not None:
+                from src.opponent_model import infer_seller_type
+                kind = infer_seller_type(game.get("game_state", {}).get("history") or [])["kind"]
+                if kind != "unknown":
+                    profile.buyer_kind = kind
         else:
             from src.safety import safe_action
             raw = safe_action(game)

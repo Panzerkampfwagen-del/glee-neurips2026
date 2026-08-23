@@ -154,3 +154,33 @@ def test_interval_estimator_rejection_semantics():
     lo2, hi2 = negotiation.estimate_opponent_interval(hist2, "buyer")
     assert hi2 <= 103.5
     assert lo2 < 50.0
+
+
+def test_opener_aggression_scale_bounds():
+    # pushover (reject_rate 0 -> scale 1.2): seller anchors harder
+    hard = negotiation.opener(100.0, True, False, aggression_scale=1.2)
+    soft = negotiation.opener(100.0, True, False, aggression_scale=0.8)
+    base = negotiation.opener(100.0, True, False)
+    assert hard >= base >= soft > 102
+    # buyer openers stay strictly below value at any scale
+    for s in (0.8, 1.0, 1.2):
+        assert negotiation.opener(100.0, False, False, aggression_scale=s) < 100
+
+
+def test_seller_recovery_mode_after_pass_streak():
+    from src.persuasion import SellerPolicy
+    pol = SellerPolicy()
+    hist = [{"round": r, "bought": False} for r in range(1, 5)]
+    pol.observe(hist)
+    assert pol.pass_streak == 4
+    assert pol.exploit_rate(10) == 0.0
+    hist2 = hist + [{"round": 5, "bought": True, "quality": "high"}]
+    pol.observe(hist2)
+    assert pol.exploit_rate(10) > 0.0
+
+
+def test_profile_seed_kinds():
+    myopic = persuasion.SellerPolicy(seed_kind="myopic")
+    assert myopic.burned_then_bought and not myopic.burned_then_passed
+    bayes = persuasion.SellerPolicy(seed_kind="bayesian")
+    assert bayes.burned_then_passed and not bayes.burned_then_bought
