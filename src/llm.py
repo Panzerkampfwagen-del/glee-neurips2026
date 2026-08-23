@@ -16,8 +16,8 @@ API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_FAST = os.environ.get("GLEE_LLM_FAST", "openai/gpt-oss-20b")
 MODEL_STRONG = os.environ.get("GLEE_LLM_STRONG", "openai/gpt-oss-120b")
 
-_keys = [k for k in (os.environ.get("GROQ_API_KEY"),
-                     os.environ.get("GROQ_API_KEY_2")) if k]
+_keys = sorted({v for k, v in os.environ.items()
+                if k.startswith("GROQ_API_KEY") and v})
 _enabled = bool(_keys) and os.environ.get("GLEE_USE_LLM", "1") == "1"
 
 _lock = threading.Lock()
