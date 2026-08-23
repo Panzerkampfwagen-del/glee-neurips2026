@@ -108,3 +108,12 @@ def test_agent_imports_candidates_from_simulate():
     src = inspect.getsource(agent_mod)
     assert "negotiation.negotiation_candidates" not in src
     assert "simulate.negotiation_candidates" in src
+
+
+def test_agent_bargaining_gains_use_alice_bob_keys():
+    """Regression: agent.py computed gains with player_N keys against
+    alice/bob-keyed candidates (live KeyError spam 2026-08-24 01:17)."""
+    import inspect
+    import agent as agent_mod
+    src = inspect.getsource(agent_mod)
+    assert 'my_key = f"{game.get' not in src

@@ -170,7 +170,8 @@ def strategy(game: dict) -> dict:
                     cands = simulate.bargaining_candidates(
                         st, game.get("your_player", "player_1"), raw)
                     money = float(st["money_to_divide"])
-                    my_key = f"{game.get('your_player')}_gain"
+                    my_key = ("alice_gain" if game.get("your_player") == "player_1"
+                              else "bob_gain")
                     gains = [float(c[my_key]) for c in cands]
                     best, mode = simulate.rank_offers(
                         game, cands, "money splits (alice_gain, bob_gain)", gains)
