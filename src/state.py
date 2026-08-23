@@ -120,7 +120,7 @@ class PersuasionState:
     am_seller: bool
     price: float
     p: float
-    v: float
+    v: float | None
     u: float
     mode: str
     current_quality: str | None
@@ -149,7 +149,7 @@ def compile_persuasion(game: dict) -> PersuasionState:
         am_seller=am_seller,
         price=float(s["product_price"]),
         p=float(s["p"]),
-        v=float(s["v"]),
+        v=float(s["v"]) if s.get("v") is not None else None,
         u=float(s.get("u", 0.0)),
         mode=mode,
         current_quality=s.get("current_quality"),

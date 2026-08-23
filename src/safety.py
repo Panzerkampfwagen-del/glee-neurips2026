@@ -4,6 +4,8 @@ Never burn attempts or the turn clock: validate before submit, fall back to a
 legal move on any failure.
 """
 
+import re
+
 CHAR_LIMIT = 2000
 
 
@@ -28,8 +30,32 @@ def safe_action(game: dict) -> dict:
     if family == "bargaining":
         return {"decision": "accept"}
     if family == "negotiation":
-        return {"decision": "AcceptOffer"}
+        return _safe_negotiation_decision(state, game)
     return {"decision": "yes"}
+
+
+def _safe_negotiation_decision(state: dict, game: dict) -> dict:
+    """Role-aware: only accept genuinely profitable offers. A wrong accept can
+    be worse than a no-deal; a wrong reject just costs one surplus chance."""
+    me = state.get("current_player", "player_1")
+    role = state.get(f"{me}_role") or ("seller" if me == "player_1" else "buyer")
+    value = state.get(f"{me}_value")
+    last = state.get("last_offer") or {}
+    try:
+        price = float(last.get("price"))
+        value = float(value)
+    except (TypeError, ValueError):
+        return {"decision": "AcceptOffer"}
+    profitable = price >= value if role == "seller" else price <= value
+    if profitable:
+        return {"decision": "AcceptOffer"}
+    fields = (game.get("valid_actions") or {}).get("fields") or {}
+    final = state.get("horizon_known") and state.get("max_rounds") is not None \
+        and state.get("round", 1) >= state["max_rounds"]
+    if final or "product_price" not in fields:
+        return {"decision": "RejectOffer"}
+    counter = round(price * 0.9 if role == "seller" else price * 1.05, 2)
+    return {"decision": "RejectOffer", "product_price": counter}
 
 
 def _coerce_numbers(action: dict, game: dict) -> dict:
@@ -59,16 +85,25 @@ def _coerce_numbers(action: dict, game: dict) -> dict:
     return action
 
 
+_ENUM_TOKEN = re.compile(r"['\"]([^'\"]+)['\"]")
+
+
+def _allowed_decisions(field_desc: str) -> set[str]:
+    """Extract quoted enum values from a fields description string.
+    Handles \"'AcceptOffer', 'RejectOffer', or 'WalkAway'\" robustly."""
+    return {m.lower() for m in _ENUM_TOKEN.findall(str(field_desc))}
+
+
 def _check_enums(action: dict, game: dict) -> dict | None:
     atype = game["valid_actions"]["type"]
     family = game["game_family"]
     fields = (game.get("valid_actions") or {}).get("fields") or {}
     dec = action.get("decision")
     if dec is not None and "decision" in fields:
-        allowed = [v.strip().strip("'\"") for v in
-                   str(fields["decision"]).split("or")]
-        allowed = [a for a in allowed if a]
-        if dec not in allowed:
+        allowed = _allowed_decisions(fields["decision"])
+        if not allowed:
+            return action
+        if str(dec).lower() not in allowed:
             return None
     elif dec is not None and family == "persuasion" and atype in ("seller_recommendation", "buyer_decision"):
         if dec not in ("yes", "no"):

@@ -9,6 +9,7 @@ from .state import compile_bargaining
 
 DEFAULT_DELTA_OPP_PRIOR = 0.9
 FAIRNESS_PAD = 0.06
+FIELD_MIN_CONCESSION = 0.36
 
 
 def infinite_horizon_shares(d_me: float, d_opp: float, money: float) -> tuple[float, float]:
@@ -77,7 +78,15 @@ def decide(game: dict, opp_delta_hat: float = DEFAULT_DELTA_OPP_PRIOR,
     if action_type == "offer":
         opp_share = sol["opp_share_when_i_propose"]
         pad = FAIRNESS_PAD * money * (1.0 - type_confidence)
-        opp_share = max(0.02 * money, min(opp_share + pad, money))
+        opp_share = max(opp_share + pad, 0.0)
+
+        # Population floor: pure finite-horizon SPE demands crumbs the field
+        # will reject (live-verified 9.3% outcome). Blend toward SPE only as
+        # opponent-type confidence grows (exploitability-gated deviation).
+        spe_frac = opp_share / money if money > 0 else 0.5
+        blended_frac = type_confidence * spe_frac + (1.0 - type_confidence) * max(
+            spe_frac, FIELD_MIN_CONCESSION)
+        opp_share = max(0.02 * money, min(blended_frac * money, money))
         my_gain = money - opp_share
 
         alice = my_gain if st.my_player == "player_1" else opp_share

@@ -102,6 +102,29 @@ def _buy_margin(rounds_left: int | None) -> float:
     return 1.0 + 0.04 * steps ** 1.5
 
 
+def estimate_v(history: list, price: float, p: float) -> float:
+    """Estimate the buyer's high-quality value when v is hidden.
+
+    Bought rounds reveal realized value: buyer_payoff = value - price on a
+    high purchase. Fall back to a p-scaled prior so we still participate."""
+    revealed = []
+    for entry in history or []:
+        if not entry.get("bought"):
+            continue
+        payoff = entry.get("buyer_payoff")
+        if payoff is None:
+            continue
+        try:
+            val = float(payoff) + float(price)
+            if val > 0 and entry.get("quality") != "low":
+                revealed.append(val)
+        except (TypeError, ValueError):
+            continue
+    if revealed:
+        return max(revealed[-3:])
+    return (price / max(p, 0.1)) * 1.2
+
+
 def buyer_decide(game: dict) -> dict:
     st = compile_persuasion(game)
     beta = buyer_reliability(st.history)
@@ -116,7 +139,8 @@ def buyer_decide(game: dict) -> dict:
     if any(e.get("quality") == "low" for e in recent_buys):
         p_hat *= 0.7
 
-    ev = p_hat * st.v + (1.0 - p_hat) * st.u
+    v_hat = st.v if st.v is not None else estimate_v(st.history, st.price, st.p)
+    ev = p_hat * v_hat + (1.0 - p_hat) * st.u
     decision = "yes" if ev > st.price * _buy_margin(st.rounds_left) else "no"
     return {"decision": decision}
 
