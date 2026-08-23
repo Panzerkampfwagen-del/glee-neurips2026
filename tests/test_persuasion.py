@@ -123,3 +123,40 @@ def test_text_mode_returns_message():
     game = _mk_game(atype="seller_message", quality="high", msg=None, mode="text")
     out = persuasion.seller_decide(game, persuasion.SellerPolicy())
     assert isinstance(out.get("message"), str) and len(out["message"]) <= 2000
+
+
+def test_regression_a9919bf1_no_death_spiral_after_single_burn():
+    """Live game: EV=150 > price=100. One early low burn locked the old buyer
+    out for 18 rounds. Posterior + exploration must keep us in the market."""
+    hist = [
+        {"round": 1, "bought": True, "quality": "high", "seller_message": "yes"},
+        {"round": 2, "bought": True, "quality": "low", "seller_message": "yes"},
+        {"round": 3, "bought": False, "seller_message": "no"},
+    ]
+    game = _mk_game(False, "buyer_decision", price=100.0, p=0.5,
+                    v=300.0, history=hist, round_=4, total=20)
+    assert persuasion.buyer_decide(game)["decision"] == "yes"
+
+
+def test_buyer_still_boycotts_active_liar():
+    hist = [
+        {"round": r, "bought": True, "quality": "low", "seller_message": "yes"}
+        for r in (1, 2, 3)
+    ]
+    game = _mk_game(False, "buyer_decision", price=100.0, p=0.5,
+                    v=300.0, history=hist, round_=4, total=20)
+    assert persuasion.buyer_decide(game)["decision"] == "no"
+
+
+def test_buyer_rewards_selective_honesty():
+    # seller says 'no' on lows (never bought), 'yes' on highs we bought
+    hist = [
+        {"round": 1, "bought": True, "quality": "high", "seller_message": "yes"},
+        {"round": 2, "bought": False, "quality": None, "seller_message": "no"},
+        {"round": 3, "bought": False, "quality": None, "seller_message": "no"},
+        {"round": 4, "bought": True, "quality": "high", "seller_message": "yes"},
+    ]
+    game = _mk_game(False, "buyer_decision", price=150.0, p=0.5,
+                    v=400.0, history=hist, round_=5, total=20)
+    # P(high|yes) high -> buy even at 150
+    assert persuasion.buyer_decide(game)["decision"] == "yes"

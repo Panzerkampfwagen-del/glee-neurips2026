@@ -93,6 +93,35 @@ def buyer_reliability(history: list) -> DecayedBeta:
     return beta
 
 
+def _claim_of(entry: dict) -> bool | None:
+    """True/False if the seller's claim this round is classifiable."""
+    msg = entry.get("seller_message")
+    if isinstance(msg, str) and msg.strip().lower() in ("yes", "no"):
+        return msg.strip().lower() == "yes"
+    if isinstance(msg, dict):
+        d = msg.get("decision")
+        if d in ("yes", "no"):
+            return d == "yes"
+    return None
+
+
+def buyer_posterior(history: list, claimed_yes: bool | None) -> tuple[DecayedBeta, int]:
+    """Posterior over quality CONDITIONED on the seller's current claim class,
+    plus overall purchase count. In binary mode a selective liar says 'no' on
+    lows — so P(high | yes) >> base rate and P(high | no) << base rate."""
+    yes = DecayedBeta(alpha=2.0, beta=2.0, decay=0.65)
+    no = DecayedBeta(alpha=2.0, beta=2.0, decay=0.65)
+    n_all = 0
+    for entry in history or []:
+        if not entry.get("bought"):
+            continue
+        n_all += 1
+        claim = _claim_of(entry)
+        target = yes if claim else no
+        target.update(entry.get("quality") == "high")
+    return (yes if claimed_yes else no), n_all
+
+
 def _buy_margin(rounds_left: int | None) -> float:
     """Required EV/price ratio. Grows superlinearly with the seller's
     endgame defection incentive."""
@@ -127,21 +156,36 @@ def estimate_v(history: list, price: float, p: float) -> float:
 
 def buyer_decide(game: dict) -> dict:
     st = compile_persuasion(game)
-    beta = buyer_reliability(st.history)
+    history = st.history or []
+
+    last = history[-1] if history else {}
+    claimed_yes = _claim_of(last)
+    beta, n_all = buyer_posterior(history, claimed_yes)
 
     n_eff = beta.n_effective
     w_emp = n_eff / (n_eff + 1.5)
     p_hat = (1 - w_emp) * st.p + w_emp * beta.mean
 
-    # Deception penalty: a low-quality purchase among recent buys is direct
-    # evidence of active misrepresentation — discount harder than Bayes alone.
-    recent_buys = [e for e in (st.history or []) if e.get("bought")][-3:]
+    # Recency-limited deception penalty: a low-quality purchase among the last
+    # two buys is evidence of active misrepresentation, but it must fade —
+    # otherwise one early burn locks us out of profitable configs forever
+    # (live bug a9919bf1: bought 2/20 on an EV-favorable config).
+    recent_buys = [e for e in history if e.get("bought")][-2:]
     if any(e.get("quality") == "low" for e in recent_buys):
-        p_hat *= 0.7
+        p_hat *= 0.8
 
-    v_hat = st.v if st.v is not None else estimate_v(st.history, st.price, st.p)
+    v_hat = st.v if st.v is not None else estimate_v(history, st.price, st.p)
     ev = p_hat * v_hat + (1.0 - p_hat) * st.u
-    decision = "yes" if ev > st.price * _buy_margin(st.rounds_left) else "no"
+
+    # Two consecutive low-quality purchases on our buys = near-certain active
+    # liar: demand far stronger evidence before spending again.
+    margin = _buy_margin(st.rounds_left)
+    bought_seq = [e for e in history if e.get("bought")]
+    if len(bought_seq) >= 2 and all(
+            e.get("quality") == "low" for e in bought_seq[-2:]):
+        margin *= 3.0
+
+    decision = "yes" if ev > st.price * margin else "no"
     return {"decision": decision}
 
 
