@@ -1,203 +1,187 @@
-"""Opponent modeling + cross-game profiles for the GLEE agent."""
+"""Opponent modeling: decayed Beta counters, valuation intervals, type posteriors.
 
-from __future__ import annotations
+Explicit external filter (per TERMS-Bench finding): all belief updating is
+numeric code, never LLM reflection.
+"""
 
 import json
 import math
 import os
-import time
-from dataclasses import dataclass, field
+import threading
 
 
-def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, x))
+class DecayedBeta:
+    """Beta-Bernoulli counter with exponential decay on old evidence."""
 
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0, decay: float = 0.7):
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.decay = decay
+        self.n_since = 0.0
 
-@dataclass
-class BetaPosterior:
-    alpha: float = 1.0
-    beta: float = 1.0
-    decay: float = 0.95
-
-    def update(self, success: bool, weight: float = 1.0) -> None:
+    def update(self, success: bool):
         self.alpha *= self.decay
         self.beta *= self.decay
         if success:
-            self.alpha += weight
+            self.alpha += 1.0
         else:
-            self.beta += weight
+            self.beta += 1.0
+        self.n_since += 1.0
 
     @property
     def mean(self) -> float:
         return self.alpha / (self.alpha + self.beta)
 
     @property
+    def n_effective(self) -> float:
+        return self.alpha + self.beta - 2.0
+
     def confidence(self) -> float:
-        return (self.alpha + self.beta - 2.0) / (
-            (self.alpha + self.beta - 2.0) + 8.0
-        )
+        """0..1 how much evidence we have (saturates around 8 effective obs)."""
+        return 1.0 - math.exp(-max(0.0, self.n_effective) / 4.0)
 
 
 class IntervalEstimator:
-    """Tracks [lo, hi] bounds on an opponent private value from offers."""
+    """Running [lo, hi] bounds on opponent's private value from their offers."""
 
-    def __init__(self, hard_lo: float, hard_hi: float):
-        self.hard_lo = hard_lo
-        self.hard_hi = hard_hi
-        self.lo = hard_lo
-        self.hi = hard_hi
+    def __init__(self, prior_lo: float, prior_hi: float):
+        self.lo = prior_lo
+        self.hi = prior_hi
 
-    def observe_offer(self, value: float, side: str) -> None:
-        if side == "seller":
-            self.lo = max(self.lo, value)
+    def tighten_from_offer(self, offer: float, slack: float, side: str):
+        """side: what the offer implies. A seller's ask s => value <= s.
+        A buyer's bid b => value >= b."""
+        if side == "upper":
+            self.hi = min(self.hi, offer + slack)
         else:
-            self.hi = min(self.hi, value)
+            self.lo = max(self.lo, offer - slack)
 
+    def merge_observation(self, lo: float | None = None, hi: float | None = None):
+        if lo is not None:
+            self.lo = max(self.lo, lo)
+        if hi is not None:
+            self.hi = min(self.hi, hi)
+
+    @property
     def midpoint(self) -> float:
         return (self.lo + self.hi) / 2.0
 
+    @property
     def width(self) -> float:
         return max(0.0, self.hi - self.lo)
 
 
-def concession_slope(offers: list[float]) -> float:
-    """Average per-move movement toward the other side; negative = stubborn."""
-    if len(offers) < 2:
-        return 0.0
-    diffs = [offers[i + 1] - offers[i] for i in range(len(offers) - 1)]
-    return sum(diffs) / len(diffs)
-
-
-def infer_discount_factor(
-    own_delta: float, shares_demanded: list[float], rounds_played: int
-) -> float:
-    """Rough opponent-patience read: fast concession => impatient (low delta)."""
-    if not shares_demanded or rounds_played == 0:
-        return 0.9
-    slope = concession_slope(shares_demanded)
-    impatience = _clamp(-slope * 4.0)
-    return own_delta * (1.0 - 0.5 * impatience)
-
-
-class InGameModel:
-    """Per-game Bayesian tracking across all three families."""
-
-    def __init__(self, game: dict):
-        state = game["game_state"]
-        self.game_id = game["game_id"]
-        self.opponent_name = (game.get("opponent") or {}).get("name")
-        self.disclosed = (game.get("opponent") or {}).get("type") not in (
-            None,
-            "hidden",
-        )
-        self.family = game["game_family"]
-        self.reliability = BetaPosterior(decay=0.85)
-        self.accepts_lowball = BetaPosterior(decay=0.9)
-        self.interval: IntervalEstimator | None = None
-        self._init_family(state)
-
-    def _init_family(self, state: dict) -> None:
-        if self.family == "negotiation":
-            me = state.get("current_player", "player_1")
-            my_role = state.get(f"{me}_role", "seller")
-            prior_span = 200.0
-            if my_role == "seller":
-                self.interval = IntervalEstimator(state.get(f"{me}_value", 50), state.get(f"{me}_value", 50) + prior_span)
-            else:
-                v = state.get(f"{me}_value", 150)
-                self.interval = IntervalEstimator(max(0.0, v - prior_span), v)
-        elif self.family == "persuasion":
-            pass
-
-    def observe_bargaining_offer(self, share: float, rounds_played: int) -> None:
-        self._shares = getattr(self, "_shares", [])
-        self._shares.append(share)
-        self.implied_delta = infer_discount_factor(0.9, self._shares, rounds_played)
-
-    def observe_negotiation_offer(self, price: float, opp_is_seller: bool) -> None:
-        if self.interval:
-            self.interval.observe_offer(price, "seller" if opp_is_seller else "buyer")
-
-    def observe_persuasion_round(self, recommended: bool, quality_high: bool | None) -> None:
-        if quality_high is None:
-            return
-        if recommended and not quality_high:
-            self.reliability.update(False, weight=3.0)
-        elif recommended and quality_high:
-            self.reliability.update(True)
-
-    def trust_in_recommendations(self, round_no: int, total_rounds: int) -> float:
-        base = self.reliability.mean
-        conf = self.reliability.confidence
-        blended = base * conf + 0.5 * (1.0 - conf)
-        remaining = max(0, total_rounds - round_no)
-        endgame_suspicion = 1.0 - 0.25 * (round_no / max(1, total_rounds)) ** 2
-        if remaining <= 2:
-            endgame_suspicion -= 0.15
-        return _clamp(blended * endgame_suspicion)
-
-
-PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".profiles")
-
-
-@dataclass
 class OpponentProfile:
-    games_seen: int = 0
-    concession_rate: float = 0.0
-    accept_threshold_est: float = 0.45
-    honesty_rate: float = 0.5
-    aggression: float = 0.5
-    updated_at: float = field(default_factory=time.time)
+    """Cross-game profile for one named opponent (identity-disclosed games)."""
+
+    VERSION = 1
+
+    def __init__(self, name: str):
+        self.name = name
+        self.games_seen = 0
+        self.accept_speed = DecayedBeta(decay=0.85)
+        self.reliability = DecayedBeta(decay=0.7)
+        self.deception_prior = {"human": 0.3, "frontier_llm": 0.5, "small_model": 0.6}
+        self.concession_slope_ema: float | None = None
+        self.notes: list[str] = []
+
+    def to_dict(self) -> dict:
+        return {
+            "version": self.VERSION,
+            "name": self.name,
+            "games_seen": self.games_seen,
+            "accept_speed": [self.accept_speed.alpha, self.accept_speed.beta],
+            "reliability": [self.reliability.alpha, self.reliability.beta],
+            "concession_slope_ema": self.concession_slope_ema,
+            "notes": self.notes[-20:],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "OpponentProfile":
+        p = cls(d["name"])
+        p.games_seen = d.get("games_seen", 0)
+        a, b = d.get("accept_speed", [1.0, 1.0])
+        p.accept_speed = DecayedBeta(a, b)
+        r = d.get("reliability", [1.0, 1.0])
+        p.reliability = DecayedBeta(r[0], r[1])
+        p.concession_slope_ema = d.get("concession_slope_ema")
+        p.notes = d.get("notes", [])
+        return p
 
 
-def _profile_path() -> str:
-    return os.path.join(PROFILE_DIR, "profiles.json")
+class ProfileStore:
+    """Flat JSON file of per-opponent profiles; thread-safe; crash-tolerant."""
+
+    def __init__(self, path: str | None = None):
+        self.path = path or os.environ.get(
+            "GLEE_PROFILES_PATH",
+            os.path.join(os.path.dirname(__file__), "..", "data", "profiles.json"),
+        )
+        self._lock = threading.Lock()
+        self._profiles: dict[str, OpponentProfile] = {}
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self.path) as f:
+                raw = json.load(f)
+            for name, d in raw.items():
+                self._profiles[name] = OpponentProfile.from_dict(d)
+        except (OSError, json.JSONDecodeError, KeyError):
+            self._profiles = {}
+
+    def save(self):
+        with self._lock:
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+                tmp = self.path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump({k: v.to_dict() for k, v in self._profiles.items()}, f, indent=1)
+                os.replace(tmp, self.path)
+            except OSError:
+                pass
+
+    def get(self, name: str | None) -> OpponentProfile | None:
+        if not name or name == "hidden":
+            return None
+        with self._lock:
+            if name not in self._profiles:
+                self._profiles[name] = OpponentProfile(name)
+            return self._profiles[name]
+
+    def all_profiles(self) -> dict[str, OpponentProfile]:
+        return dict(self._profiles)
 
 
-def load_profile(opponent_name: str | None) -> OpponentProfile | None:
-    if not opponent_name:
-        return None
-    try:
-        with open(_profile_path(), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        raw = data.get(opponent_name)
-        return OpponentProfile(**raw) if raw else None
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
+def infer_seller_type(history: list) -> dict:
+    """From persuasion history, estimate whether the buyer conditions on
+    history (bayesian) or buys regardless (myopic).
 
-
-def save_profile(profile: OpponentProfile, opponent_name: str | None) -> None:
-    if not opponent_name:
-        return
-    os.makedirs(PROFILE_DIR, exist_ok=True)
-    try:
-        with open(_profile_path(), "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        data = {}
-    prev = data.get(opponent_name, {})
-    old_games = prev.get("games_seen", 0)
-    k = 1.0 / (old_games + 1.0)
-    merged = {}
-    for key in ("concession_rate", "accept_threshold_est", "honesty_rate", "aggression"):
-        new_v = getattr(profile, key)
-        old_v = prev.get(key)
-        merged[key] = old_v + (new_v - old_v) * k if old_v is not None else new_v
-    merged["games_seen"] = old_games + 1
-    merged["updated_at"] = time.time()
-    data[opponent_name] = merged
-    tmp = _profile_path() + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=1)
-    os.replace(tmp, _profile_path())
-
-
-def finalize_game_profile(model: InGameModel, outcome_stats: dict) -> None:
-    profile = OpponentProfile(
-        games_seen=1,
-        concession_rate=outcome_stats.get("concession_rate", 0.0),
-        accept_threshold_est=_clamp(outcome_stats.get("accept_threshold_est", 0.45)),
-        honesty_rate=_clamp(outcome_stats.get("honesty_rate", model.reliability.mean)),
-        aggression=_clamp(outcome_stats.get("aggression", 0.5)),
-    )
-    save_profile(profile, model.opponent_name)
+    Returns {"kind": "unknown"|"myopic"|"bayesian", "burned_then_bought": bool,
+             "burned_then_passed": bool}
+    """
+    burned_at = None
+    bought_after_burn = False
+    passed_after_burn = False
+    for entry in history:
+        bought = entry.get("bought")
+        quality = entry.get("quality")
+        if bought and quality == "low" and burned_at is None:
+            burned_at = entry.get("round", 0)
+            continue
+        if burned_at is not None and entry.get("round", 0) > burned_at:
+            if bought:
+                bought_after_burn = True
+            elif bought is False:
+                passed_after_burn = True
+    if bought_after_burn and not passed_after_burn:
+        kind = "myopic"
+    elif passed_after_burn:
+        kind = "bayesian"
+    else:
+        kind = "unknown"
+    return {
+        "kind": kind,
+        "burned_then_bought": bought_after_burn,
+        "burned_then_passed": passed_after_burn,
+    }

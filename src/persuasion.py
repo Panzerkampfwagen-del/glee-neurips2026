@@ -1,161 +1,128 @@
-"""Persuasion (Strategic Information Transmission) strategy module."""
+"""Persuasion (repeated strategic information transmission) solver.
 
-from __future__ import annotations
+Seller: reputation-aware signaling policy — build trust, exploit in the
+endgame window against buyers proven to condition on history; farm myopic
+buyers immediately.
+Buyer: decayed reliability posterior over the seller's recommendations;
+message text carries zero evidential weight; endgame suspicion escalation.
+"""
 
-from src.opponent_model import InGameModel, load_profile
+from .opponent_model import DecayedBeta, infer_seller_type
+from .state import compile_persuasion
 
-_MODELS: dict[str, InGameModel] = {}
-
-
-def _model(game: dict) -> InGameModel:
-    gid = game["game_id"]
-    if gid not in _MODELS:
-        profile = load_profile((game.get("opponent") or {}).get("name"))
-        m = InGameModel(game)
-        if profile:
-            m.reliability.alpha += profile.honesty_rate * 2.0
-            m.reliability.beta += (1.0 - profile.honesty_rate) * 2.0
-        _MODELS[gid] = m
-    return _MODELS[gid]
+HONEST_PHASE_EXPLOIT = 0.05
+MID_EXPLOIT = 0.15
 
 
-def safe_action(game: dict) -> dict:
-    vtype = game["valid_actions"]["type"]
-    state = game["game_state"]
-    me = state.get("current_player", "player_1")
-    if vtype in ("seller_message", "seller_recommendation"):
-        if vtype == "seller_message":
-            return {"message": "Honest take: buy only if this fits your needs."}
-        quality = state.get("current_quality")
-        return {"decision": "yes" if quality == "high" else "no"}
-    price = float(state.get("product_price", 0))
-    p = float(state.get("p", 0.5))
-    v = float(state.get("v", price * 2))
-    u = float(state.get("u", 0))
-    expected = p * v + (1 - p) * u
-    return {"decision": "yes" if expected > price else "no"}
+class SellerPolicy:
+    """Per-game seller state machine."""
+
+    def __init__(self):
+        self.burned_then_bought = False
+        self.burned_then_passed = False
+        self.recents: list[tuple[bool, str | None]] = []
+
+    def observe(self, history: list):
+        info = infer_seller_type(history)
+        self.burned_then_bought = info["burned_then_bought"]
+        self.burned_then_passed = info["burned_then_passed"]
+        for entry in (history or [])[-5:]:
+            bought = entry.get("bought")
+            if bought:
+                self.recents.append((True, entry.get("quality")))
+            elif bought is False:
+                self.recents.append((False, None))
+
+    def exploit_rate(self, rounds_left: int) -> float:
+        if self.burned_then_bought and not self.burned_then_passed:
+            return 0.95
+        if self.burned_then_passed or len(self.recents) < 2:
+            if rounds_left <= 3:
+                return 0.35 + 0.15 * (4 - min(rounds_left, 4))
+            return HONEST_PHASE_EXPLOIT if rounds_left > 6 else MID_EXPLOIT
+        trust = sum(1 for b, _ in self.recents[-4:] if b) / max(1, min(4, len(self.recents)))
+        if rounds_left <= 2 and trust >= 0.75:
+            return 0.7
+        if rounds_left <= 3 and trust >= 0.6:
+            return 0.45
+        return MID_EXPLOIT
+
+    def recommend(self, quality: str, rounds_left: int, rng=None) -> dict:
+        import random
+        rng = rng or random
+        rate = self.exploit_rate(rounds_left)
+        claim_high = quality == "high" or rng.random() < rate
+        decision = "yes" if claim_high else "no"
+        return {"decision": decision}
+
+    def message(self, quality: str, rounds_left: int, rng=None) -> dict:
+        import random
+        rng = rng or random
+        rate = self.exploit_rate(rounds_left)
+        claiming_high = quality == "high" or rng.random() < rate
+        if claiming_high:
+            msg = ("Inspected this one personally — it's the high-grade unit today. "
+                   "At this price it's an easy call.")
+        else:
+            msg = ("Today's unit is serviceable — nothing fancy, does the job. "
+                   "Worth it if you need one now.")
+        return {"message": msg}
 
 
-def _empirical_honesty(state: dict) -> tuple[float, int]:
-    """P(HIGH | recommended) from rounds the BUYER purchased (only those reveal)."""
-    history = state.get("history", [])
-    recs_high = 0
-    recs_total = 0
-    for h in history:
-        bought = h.get("bought") or h.get("buyer_decision") == "yes"
-        msg = h.get("seller_message")
-        recommended = (
-            msg == "yes"
-            or (isinstance(msg, str) and msg.lower().startswith(("yes", "buy", "recommend")))
-            or (isinstance(msg, dict) and msg.get("recommend"))
-        )
-        quality = h.get("quality")
-        if bought and recommended and quality is not None:
-            recs_total += 1
-            if quality == "high":
-                recs_high += 1
-    return (recs_high / recs_total if recs_total else None), recs_total
+def seller_decide(game: dict, policy: SellerPolicy | None = None) -> dict:
+    st = compile_persuasion(game)
+    policy = policy or SellerPolicy()
+    policy.observe(st.history)
+    rl = st.rounds_left
+
+    action_type = game["valid_actions"]["type"]
+    if action_type == "seller_recommendation":
+        return policy.recommend(st.current_quality, rl)
+    if action_type == "seller_message":
+        return policy.message(st.current_quality, rl)
+    return {}
 
 
-def seller_strategy(game: dict, model: InGameModel) -> dict:
-    state = game["game_state"]
-    vtype = game["valid_actions"]["type"]
-    quality = state.get("current_quality")
-    total = int(state.get("total_rounds", 10))
-    rnd = int(state.get("round", 1))
-    remaining = max(0, total - rnd)
-    history = state.get("history", [])
-    trust_proxy = sum(
-        1
-        for h in history
-        if (h.get("seller_message") == "yes" or h.get("bought"))
-        and h.get("buyer_decision") == "yes"
-    )
-
-    if vtype == "seller_recommendation":
-        if quality == "high":
-            return {"decision": "yes"}
-        bluff_value = 0.0
-        if remaining <= 1 and trust_proxy >= 3:
-            bluff_value = 0.8
-        elif remaining <= 2 and trust_proxy >= 5:
-            bluff_value = 0.35
-        return {"decision": "yes" if bluff_value > 0.5 else "no"}
-
-    if quality == "high":
-        return {
-            "message": (
-                "Straight recommendation: this one is high quality. "
-                "You know my record — check it against what you've received."
-            )
-        }
-    if remaining <= 1 and trust_proxy >= 4:
-        return {"message": "Strong pick this round — I'd grab it."}
-    return {
-        "message": (
-            "Honest take: skip this one, it's not worth the price. "
-            "Better to keep your budget for a good round."
-        )
-    }
+def buyer_reliability(history: list) -> DecayedBeta:
+    """Evidence from purchased rounds only (only those reveal quality)."""
+    beta = DecayedBeta(alpha=2.0, beta=2.0, decay=0.65)
+    for entry in history or []:
+        if not entry.get("bought"):
+            continue
+        beta.update(entry.get("quality") == "high")
+    return beta
 
 
-def buyer_strategy(game: dict, model: InGameModel) -> dict:
-    state = game["game_state"]
-    price = float(state.get("product_price", 0))
-    p_prior = float(state.get("p", 0.5))
-    v = float(state.get("v", 0))
-    u = float(state.get("u", 0))
-    total = int(state.get("total_rounds", 10))
-    rnd = int(state.get("round", 1))
-
-    emp, n = _empirical_honesty(state)
-    if emp is None or n < 2:
-        post_h = p_prior
-    else:
-        w = min(1.0, n / 6.0)
-        post_h = w * emp + (1 - w) * p_prior
-
-    trust = model.trust_in_recommendations(rnd, total)
-    msg_type = state.get("seller_message_type")
-    last_msg = state.get("seller_message")
-
-    if msg_type == "binary" or last_msg == "yes":
-        effective_p = post_h * trust + p_prior * (1 - trust) * 0.5 + 0.5 * trust * (1 - post_h)
-        effective_p = post_h * trust + p_prior * 0.5 * (1 - trust)
-    else:
-        hedged = isinstance(last_msg, str) and any(
-            t in last_msg.lower() for t in ("maybe", "perhaps", "might", "skip")
-        )
-        text_trust = trust * (0.6 if not hedged else 0.3)
-        effective_p = post_h * 0.7 + p_prior * 0.3
-        effective_p = effective_p * (0.9 + 0.2 * text_trust)
-
-    expected = effective_p * v + (1 - effective_p) * u
-    margin_buffer = price * (0.05 if rnd < total - 2 else 0.0)
-    buy = expected > price + margin_buffer
-    return {"decision": "yes" if buy else "no"}
+def _buy_margin(rounds_left: int | None) -> float:
+    """Required EV/price ratio. Grows superlinearly with the seller's
+    endgame defection incentive."""
+    if rounds_left is None:
+        return 1.05
+    steps = min(max(0, 4 - rounds_left), 4)
+    return 1.0 + 0.04 * steps ** 1.5
 
 
-def persuasion_strategy(game: dict) -> dict:
-    try:
-        model = _model(game)
-        state = game["game_state"]
-        action_type = game["valid_actions"]["type"]
-        me = state.get("current_player", "player_1")
-        if action_type in ("seller_message", "seller_recommendation"):
-            return seller_strategy(game, model)
-        if action_type == "buyer_decision":
-            return buyer_strategy(game, model)
-        return safe_action(game)
-    except Exception:
-        return safe_action(game)
+def buyer_decide(game: dict) -> dict:
+    st = compile_persuasion(game)
+    beta = buyer_reliability(st.history)
+
+    n_eff = beta.n_effective
+    w_emp = n_eff / (n_eff + 1.5)
+    p_hat = (1 - w_emp) * st.p + w_emp * beta.mean
+
+    # Deception penalty: a low-quality purchase among recent buys is direct
+    # evidence of active misrepresentation — discount harder than Bayes alone.
+    recent_buys = [e for e in (st.history or []) if e.get("bought")][-3:]
+    if any(e.get("quality") == "low" for e in recent_buys):
+        p_hat *= 0.7
+
+    ev = p_hat * st.v + (1.0 - p_hat) * st.u
+    decision = "yes" if ev > st.price * _buy_margin(st.rounds_left) else "no"
+    return {"decision": decision}
 
 
-def observe(game: dict, submitted: dict) -> None:
-    model = _MODELS.get(game["game_id"])
-    if not model:
-        return
-    state = game["game_state"]
-    if game["valid_actions"]["type"] == "seller_recommendation":
-        if submitted.get("decision") == "yes":
-            model._purchases_following_recs = getattr(model, "_purchases_following_recs", 0)
+def decide(game: dict, policy: SellerPolicy | None = None) -> dict:
+    st = compile_persuasion(game)
+    if st.am_seller:
+        return seller_decide(game, policy)
+    return buyer_decide(game)
