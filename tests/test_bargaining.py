@@ -82,3 +82,30 @@ def test_tracker_delta_updates():
     for _ in range(6):
         t2.observe_rejection(0.5)
     assert t2.delta_hat() > 0.85
+
+
+def test_unlimited_horizon_deadlock_decay():
+    """Live forensics: six no-deal games from repeating one frozen offer 49
+    rounds on unknown horizons. After round 14 we must converge toward even
+    and accept token-positive offers."""
+    def mk(round_, last_offer, atype="offer", proposer="player_1"):
+        return {
+            "game_family": "bargaining", "your_player": "player_1",
+            "valid_actions": {"type": atype, "fields": {}},
+            "game_state": {
+                "money_to_divide": 10000.0, "round": round_, "max_rounds": None,
+                "horizon_known": False, "delta_1": 0.9, "delta_2": 0.95,
+                "current_player": proposer, "proposer": proposer,
+                "last_offer": last_offer, "complete_information": True,
+                "messages_allowed": False, "history": [],
+            },
+        }
+    # round 30 as proposer: demand must be well under the greedy 97%
+    a = bargaining.decide(mk(30, None))
+    my_share = a["alice_gain"] / 10000.0
+    assert my_share < 0.75
+
+    # round 30 as receiver: any positive offer gets accepted
+    d = bargaining.decide(mk(30, {"player_1_gain": 300.0, "player_2_gain": 9700.0},
+                             atype="decision", proposer="player_2"))
+    assert d["decision"] == "accept"

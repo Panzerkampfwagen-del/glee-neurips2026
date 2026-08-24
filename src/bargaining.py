@@ -77,6 +77,17 @@ def decide(game: dict, opp_delta_hat: float = DEFAULT_DELTA_OPP_PRIOR,
         rl = 1
     sol = solve_thresholds(st.delta_me, opp_delta_hat, money, rl)
 
+    # Deadlock decay for unlimited horizons (live forensics 2026-08-24: six
+    # games lost by repeating one frozen offer 49 times until server timeout).
+    # After round 14 converge toward an even split and let the accept floor
+    # sink toward token-positive: a thin deal always beats a no-deal.
+    if rl is None and st.round and st.round > 14:
+        prog = min(1.0, (st.round - 14) / 25.0)
+        half = money / 2.0
+        sol["propose_share"] = sol["propose_share"] + (half - sol["propose_share"]) * prog
+        sol["opp_share_when_i_propose"] = money - sol["propose_share"]
+        sol["accept_floor"] = sol["accept_floor"] * (1.0 - prog) + 0.005 * money * prog
+
     if action_type == "offer":
         opp_share = sol["opp_share_when_i_propose"]
         pad = FAIRNESS_PAD * money * (1.0 - type_confidence)
