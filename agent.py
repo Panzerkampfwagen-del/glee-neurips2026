@@ -167,12 +167,19 @@ def strategy(game: dict) -> dict:
 
         action = validate_and_fix(game, raw)
 
+        action = validate_and_fix(game, raw)
+
         # LLM layer: simulation-ranked candidates + drafted language on
         # pivotal offers only — routine moves stay deterministic and free.
+        # Hard move-deadline: if anything above ate >25s, skip the LLM phase
+        # entirely so latency never stacks into the 120s turn clock.
         try:
+            import time as _t
+            _move_deadline = _t.monotonic() + 25.0
             atype = game["valid_actions"]["type"]
             pivotal = simulate.is_pivotal(game)
-            llm_on = llm.enabled() and not ({"sim", "all"} & ABLATE)
+            llm_on = llm.enabled() and not ({"sim", "all"} & ABLATE) \
+                and _t.monotonic() < _move_deadline
             if llm_on and atype == "offer" and \
                     family in ("bargaining", "negotiation"):
                 st = game["game_state"]
@@ -207,7 +214,7 @@ def strategy(game: dict) -> dict:
                 if best:
                     raw = dict(best)
                     logger.info("[%s %s] sim-rank %s", family, game_id[:8], mode)
-            elif llm_on and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
+            elif llm_on and _t.monotonic() < _move_deadline and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
                 role = {"bargaining": "a negotiator splitting a pot under inflation",
                         "negotiation": "a buyer or seller trading one product",
                         "persuasion": "a seller recommending products of hidden quality"}[family]

@@ -75,7 +75,7 @@ def chat(messages: list[dict], model: str | None = None,
             "model": model or MODEL_FAST,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.4,
+            "temperature": 0.2,
         })
         if resp.status_code != 200:
             return None

@@ -6,6 +6,7 @@ fallback — the agent never depends on Groq being up.
 """
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from src import llm
@@ -140,12 +141,18 @@ def rank_offers(game: dict, candidates: list[dict], target_desc: str,
             "You are a concise game-theory assistant. Output only valid JSON."},
         {"role": "user", "content": prompt},
     ]
+    # Hard wall-clock ceiling for the whole ranking wave: never let LLM
+    # latency stack into the 120s turn clock (crash-loop protection).
+    deadline = time.monotonic() + 20.0
+    probs = None
     with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
-        futures = [pool.submit(llm.json_chat, messages, None, timeout_per_call, 1200)
-                   for _ in range(1)]
-        probs = None
-        for f in futures:
-            probs = f.result()
+        future = pool.submit(llm.json_chat, messages, None,
+                             min(timeout_per_call, 8.0), 1200)
+        remaining = max(1.0, deadline - time.monotonic())
+        try:
+            probs = future.result(timeout=remaining)
+        except Exception:
+            probs = None
     if not probs or "p_accept" not in probs:
         return None, "llm-failed"
     try:
