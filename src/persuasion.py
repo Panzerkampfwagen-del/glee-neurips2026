@@ -186,10 +186,10 @@ def signal_regime(history: list) -> str:
     return "informative"
 
 
-def buyer_decide(game: dict) -> dict:
+def buyer_decide(game: dict, skip_regime: bool = False) -> dict:
     st = compile_persuasion(game)
     history = st.history or []
-    regime = signal_regime(history)
+    regime = "informative" if skip_regime else signal_regime(history)
 
     # Uninformative seller: quality draws are independent of their constant
     # claim — no posteriors, no streaks, no endgame suspicion (none of it
@@ -230,8 +230,11 @@ def buyer_decide(game: dict) -> dict:
 
 
 def decide(game: dict, policy: SellerPolicy | None = None,
-           seed_kind: str | None = None) -> dict:
+           seed_kind: str | None = None,
+           disable_signal_regime: bool = False) -> dict:
+    """disable_signal_regime: ablation flag — reproduces pre-F6 buyer behavior
+    by skipping the uninformative-regime branch."""
     st = compile_persuasion(game)
     if st.am_seller:
         return seller_decide(game, policy, seed_kind=seed_kind)
-    return buyer_decide(game)
+    return buyer_decide(game, skip_regime=disable_signal_regime)

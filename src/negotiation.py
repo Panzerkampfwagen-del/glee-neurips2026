@@ -163,6 +163,13 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
                     target = opener(v, False, False,
                                     aggression_scale=aggression_scale)
         price = _round_odd(max(target, 1.0))
+        # IR clamps: never offer below our value as seller / above it as buyer
+        # (F3 family — rounding snaps must not accept guaranteed losses)
+        if st.is_seller:
+            price = max(price, v * 1.001)
+        else:
+            price = min(price, v * 0.999)
+        price = _round_odd(max(price, 1.0))
         action = {"product_price": price}
         if st.messages_allowed:
             action["message"] = _negotiation_message(st, price)
@@ -189,6 +196,7 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
                 return {"decision": "AcceptOffer" if ir else "RejectOffer"}
             counter = fair if known_opp else _round_odd(
                 max(v, (price / 0.92 + z_hi) / 2 if hi_hat else price * 1.18))
+            counter = max(counter, v * 1.001)
             action = {"decision": "RejectOffer", "product_price": _round_odd(counter)}
             if st.messages_allowed:
                 action["message"] = _negotiation_message(st, counter)
@@ -215,6 +223,9 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
             counter = fair
         else:
             counter = _round_odd(min(v, price * 1.06 if price and price < v else v * 0.85))
+        # hard ceiling: never counter above our own max (F3 — rounding snap
+        # could overshoot by a few units, accepting a guaranteed loss)
+        counter = min(counter, v * 0.999)
         action = {"decision": "RejectOffer", "product_price": _round_odd(counter)}
         if st.messages_allowed:
             action["message"] = _negotiation_message(st, counter)

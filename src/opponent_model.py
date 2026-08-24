@@ -122,10 +122,10 @@ class ProfileStore:
     """Flat JSON file of per-opponent profiles; thread-safe; crash-tolerant."""
 
     def __init__(self, path: str | None = None):
+        pdir = os.environ.get("GLEE_PROFILE_DIR",
+                              os.path.join(os.path.dirname(__file__), "..", "data"))
         self.path = path or os.environ.get(
-            "GLEE_PROFILES_PATH",
-            os.path.join(os.path.dirname(__file__), "..", "data", "profiles.json"),
-        )
+            "GLEE_PROFILES_PATH", os.path.join(pdir, "profiles.json"))
         self._lock = threading.Lock()
         self._profiles: dict[str, OpponentProfile] = {}
         self._load()

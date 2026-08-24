@@ -48,6 +48,8 @@ class AgentState:
 
 
 STATE = AgentState()
+ABLATE = {a.strip() for a in
+          os.environ.get("GLEE_ABLATE", "").split(",") if a.strip()}
 GAME_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "games.jsonl")
 
 
@@ -114,18 +116,23 @@ def strategy(game: dict) -> dict:
         family = game["game_family"]
         game_id = game["game_id"]
         opp_name = (game.get("opponent") or {}).get("name")
-        profile = STATE.profiles.get(opp_name)
+        profile = None if ("profiles" in ABLATE or "all" in ABLATE) \
+            else STATE.profiles.get(opp_name)
 
         if family == "bargaining":
             update_tracker_from_history(game_id, game)
-            tracker = STATE.tracker(game_id)
-            delta_hat = tracker.delta_hat()
-            if profile is not None and profile.implied_delta:
-                w = min(0.5, profile.games_seen / 10.0)
-                delta_hat = (1 - w) * delta_hat + w * profile.implied_delta
-            raw = bargaining.decide(game, opp_delta_hat=delta_hat)
-            if profile is not None:
-                profile.implied_delta = round(tracker.delta_hat(), 3)
+            if "opp_model" in ABLATE or "all" in ABLATE:
+                delta_hat = bargaining.DEFAULT_DELTA_OPP_PRIOR
+                raw = bargaining.decide(game, opp_delta_hat=delta_hat)
+            else:
+                tracker = STATE.tracker(game_id)
+                delta_hat = tracker.delta_hat()
+                if profile is not None and profile.implied_delta:
+                    w = min(0.5, profile.games_seen / 10.0)
+                    delta_hat = (1 - w) * delta_hat + w * profile.implied_delta
+                raw = bargaining.decide(game, opp_delta_hat=delta_hat)
+                if profile is not None:
+                    profile.implied_delta = round(tracker.delta_hat(), 3)
         elif family == "negotiation":
             lo, hi = opponent_value_interval(game)
             scale = 1.0
@@ -141,10 +148,12 @@ def strategy(game: dict) -> dict:
                     profile.reject_rate = round(rr, 3) if old is None \
                         else round(0.7 * old + 0.3 * rr, 3)
         elif family == "persuasion":
-            seed = profile.buyer_kind if profile else None
+            seed = None if ("profiles" in ABLATE or "all" in ABLATE) \
+                else (profile.buyer_kind if profile else None)
             policy = STATE.seller_policy(game_id)
             raw = persuasion.decide(game, policy=policy,
-                                    seed_kind=seed if policy.fresh() else None)
+                                    seed_kind=seed if policy.fresh() else None,
+                                    disable_signal_regime="signal_regime" in ABLATE)
             if profile is not None and policy.burned_then_bought:
                 pass  # kind inferred in-game; persisted below via history kind
             if profile is not None:
@@ -163,7 +172,8 @@ def strategy(game: dict) -> dict:
         try:
             atype = game["valid_actions"]["type"]
             pivotal = simulate.is_pivotal(game)
-            if llm.enabled() and atype == "offer" and \
+            llm_on = llm.enabled() and not ({"sim", "all"} & ABLATE)
+            if llm_on and atype == "offer" and \
                     family in ("bargaining", "negotiation"):
                 st = game["game_state"]
                 if family == "bargaining":
@@ -197,7 +207,7 @@ def strategy(game: dict) -> dict:
                 if best:
                     raw = dict(best)
                     logger.info("[%s %s] sim-rank %s", family, game_id[:8], mode)
-            elif llm.enabled() and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
+            elif llm_on and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
                 role = {"bargaining": "a negotiator splitting a pot under inflation",
                         "negotiation": "a buyer or seller trading one product",
                         "persuasion": "a seller recommending products of hidden quality"}[family]
