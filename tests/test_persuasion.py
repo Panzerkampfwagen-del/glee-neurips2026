@@ -184,3 +184,38 @@ def test_buyer_rewards_selective_honesty():
                     v=400.0, history=hist, round_=5, total=20)
     # P(high|yes) high -> buy even at 150
     assert persuasion.buyer_decide(game)["decision"] == "yes"
+
+
+def test_seller_probes_once_after_burn():
+    """After a successful low-sale, probe once: recommend yes on the next low
+    to classify the buyer. Buy-again -> farm; pass -> honest mode."""
+    pol = persuasion.SellerPolicy()
+    # r1: sold a low unit (burn delivered)
+    hist = [{"round": 1, "bought": True, "quality": "low"}]
+    pol.observe(hist)
+    assert pol.probe_pending
+    assert pol.exploit_rate(15) == 0.95  # probe overrides caution
+
+    # buyer PASSED after the burn -> bayesian confirmed, no more probing
+    hist2 = hist + [{"round": 2, "bought": False}]
+    pol.observe(hist2)
+    assert not pol.probe_pending
+
+    # alternative: buyer bought AGAIN post-burn -> myopic confirmed
+    pol2 = persuasion.SellerPolicy()
+    hist3 = hist + [{"round": 2, "bought": True, "quality": "low"},
+                    {"round": 3, "bought": True, "quality": "high"}]
+    pol2.observe(hist3)
+    assert pol2.burned_then_bought
+    assert pol2.exploit_rate(10) == 0.95
+
+
+def test_probe_not_retriggered_by_older_burns():
+    pol = persuasion.SellerPolicy()
+    hist = [
+        {"round": 1, "bought": True, "quality": "low"},   # old burn
+        {"round": 2, "bought": False},                     # already classified
+        {"round": 3, "bought": True, "quality": "high"},   # recent honest sale
+    ]
+    pol.observe(hist)
+    assert not pol.probe_pending

@@ -22,6 +22,7 @@ class SellerPolicy:
         self.burned_then_passed = seed_kind == "bayesian"
         self.recents: list[tuple[bool, str | None]] = []
         self.pass_streak = 0
+        self.probe_pending = False
 
     def fresh(self) -> bool:
         """True until any in-game observation — profile seeds only apply then."""
@@ -45,10 +46,25 @@ class SellerPolicy:
             if entry.get("bought"):
                 break
             self.pass_streak += 1
+        # Explicit probe: right after a successful low-sale, recommend yes ONCE
+        # more. Buying again proves myopia (farm them); passing proves they
+        # condition on history (go honest). Passive waiting costs many rounds.
+        self.probe_pending = False
+        hist = history or []
+        for i in range(len(hist) - 1, -1, -1):
+            e = hist[i]
+            if e.get("bought") and e.get("quality") == "low":
+                # most recent burn; probe only if no reaction observed yet
+                self.probe_pending = i == len(hist) - 1
+                break
+            if e.get("bought"):
+                break
 
     def exploit_rate(self, rounds_left: int) -> float:
-        if self.pass_streak >= 3:
+        if self.pass_streak >= 3 and not self.probe_pending:
             return 0.0
+        if self.probe_pending:
+            return 0.95
         if self.burned_then_bought and not self.burned_then_passed:
             return 0.95
         if self.burned_then_passed or len(self.recents) < 2:
