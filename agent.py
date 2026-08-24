@@ -196,8 +196,6 @@ def strategy(game: dict) -> dict:
 
         action = validate_and_fix(game, raw)
 
-        action = validate_and_fix(game, raw)
-
         # LLM layer: simulation-ranked candidates + drafted language on
         # pivotal offers only — routine moves stay deterministic and free.
         # Hard move-deadline: if anything above ate >25s, skip the LLM phase
