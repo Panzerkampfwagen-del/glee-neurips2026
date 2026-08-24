@@ -1,0 +1,13 @@
+{
+  "comment": "Displayed ratings + games at checkpoints (agent01). raw = disp*(g+30)/g",
+  "snapshots": [
+    {"t": "2026-08-23T18:48+07:00", "note": "pre-fix gen-1 era", "bargaining": {"r": 904.0, "g": 37}, "negotiation": {"r": 957.9, "g": 39}, "persuasion": {"r": 1048.0, "g": 35}},
+    {"t": "2026-08-23T22:50+07:00", "note": "gen-2 deploy marker", "bargaining": {"r": 955.1, "g": 95}, "negotiation": {"r": 1081.5, "g": 97}, "persuasion": {"r": 1103.3, "g": 92}},
+    {"t": "2026-08-24T00:30+07:00", "bargaining": {"r": 1048.3, "g": 176}, "negotiation": {"r": 1195.8, "g": 177}, "persuasion": {"r": 1138.8, "g": 175}},
+    {"t": "2026-08-24T09:15+07:00", "note": "post-reboot restart", "bargaining": {"r": 1408.4, "g": 456}, "negotiation": {"r": 1400.6, "g": 460}, "persuasion": {"r": 1145.0, "g": 458}},
+    {"t": "2026-08-24T12:10+07:00", "bargaining": {"r": 1700.7, "g": 723}, "negotiation": {"r": 1393.2, "g": 728}, "persuasion": {"r": 1162.5, "g": 715}},
+    {"t": "2026-08-24T14:46+07:00", "bargaining": {"r": 1737.1, "g": 970}, "negotiation": {"r": 1528.7, "g": 972}, "persuasion": {"r": 1147.4, "g": 963}},
+    {"t": "2026-08-24T16:05+07:00", "bargaining": {"r": 1954.2, "g": 1233}, "negotiation": {"r": 1471.4, "g": 1242}, "persuasion": {"r": 1147.8, "g": 1220}},
+    {"t": "2026-08-24T19:40+07:00", "bargaining": {"r": 1845.0, "g": 1669}, "negotiation": {"r": 1379.8, "g": 1677}, "persuasion": {"r": 1222.5, "g": 1654}}
+  ]
+}
