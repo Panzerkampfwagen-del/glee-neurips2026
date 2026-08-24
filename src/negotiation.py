@@ -184,10 +184,17 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
         squeeze_room = (st.rounds_left is None) or (st.rounds_left > 2)
         known_opp = st.complete_information and st.opp_value is not None
 
+        # Unlimited horizons have no natural endgame force: after ~14 rounds,
+        # decay our demands so mutual firmness can't deadlock into no-deal
+        # (a thin deal always beats a bottom-percentile no-deal).
+        thr = _min_capture(st.rounds_left, known_opp)
+        if st.rounds_left is None and st.round and st.round > 14:
+            thr = 0.0
+
         if st.is_seller:
             ir = price >= v
             capture = ((price - z_lo) / surplus_est) if surplus_est > 0 else 1.0
-            want = capture >= _min_capture(st.rounds_left, known_opp)
+            want = capture >= thr
             if ir and (want or not squeeze_room or _firmness(st.history)):
                 return {"decision": "AcceptOffer"}
             if final:
@@ -202,7 +209,7 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
 
         ir = price <= v
         capture = ((z_hi - price) / surplus_est) if surplus_est > 0 else 1.0
-        want = capture >= _min_capture(st.rounds_left, known_opp)
+        want = capture >= thr
         if ir and (want or not squeeze_room):
             return {"decision": "AcceptOffer"}
         if final:

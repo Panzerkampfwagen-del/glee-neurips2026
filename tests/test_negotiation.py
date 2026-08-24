@@ -83,3 +83,28 @@ def test_counter_always_carries_price():
     a = negotiation.decide(game)
     assert a["decision"] == "RejectOffer"
     assert isinstance(a["product_price"], float) or isinstance(a["product_price"], int)
+
+
+def test_unlimited_horizon_deadlock_decay():
+    """After ~14 rounds of unlimited-horizon play, demands must decay so
+    mutual firmness cannot deadlock into a bottom-percentile no-deal."""
+    hist = [
+        {"round": r, "offer": {"price": 200.0 - r, "from_player": "player_1"},
+         "decision": "RejectOffer", "decided_by": "player_2"}
+        for r in range(1, 16)
+    ]
+    game = {
+        "game_family": "negotiation", "your_player": "player_2", "game_id": "x",
+        "valid_actions": {"type": "decision", "fields": {}},
+        "game_state": {
+            "round": 16, "max_rounds": None, "horizon_known": False,
+            "current_player": "player_2",
+            "player_1_role": "seller", "player_2_role": "buyer",
+            "player_1_value": 100.0, "player_2_value": 190.0,
+            "complete_information": False, "messages_allowed": False,
+            "last_offer": {"price": 185.0, "from_player": "player_1", "round": 16},
+            "history": hist,
+        },
+    }
+    # price 185 <= our value 190 (IR), capture tiny but round > 14 -> accept
+    assert negotiation.decide(game)["decision"] == "AcceptOffer"
