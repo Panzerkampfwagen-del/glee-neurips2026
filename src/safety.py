@@ -19,12 +19,15 @@ def safe_action(game: dict) -> dict:
             half = state["money_to_divide"] / 2
             return {"alice_gain": round(half, 2), "bob_gain": round(half, 2)}
         me = state.get("current_player", "player_1")
+        role = state.get(f"{me}_role") or ("seller" if me == "player_1" else "buyer")
         value = state.get(f"{me}_value")
         if value is None:
             value = (state.get("player_1_value") if me == "player_1"
                      else state.get("player_2_value", 10.0))
-        # small pad so the fallback is strictly profitable when we're seller
-        return {"product_price": float(value) * 1.02}
+        # strictly profitable for whichever side we're on (audit H3)
+        if role == "seller":
+            return {"product_price": float(value) * 1.02}
+        return {"product_price": float(value) * 0.98}
     if action_type == "seller_message":
         return {"message": "I recommend this product."}
 

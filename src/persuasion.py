@@ -33,6 +33,7 @@ class SellerPolicy:
         if info["kind"] != "unknown":
             self.burned_then_bought = info["burned_then_bought"]
             self.burned_then_passed = info["burned_then_passed"]
+        self.recents = []
         for entry in (history or [])[-5:]:
             bought = entry.get("bought")
             if bought:

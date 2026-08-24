@@ -184,3 +184,64 @@ def test_profile_seed_kinds():
     assert myopic.burned_then_bought and not myopic.burned_then_passed
     bayes = persuasion.SellerPolicy(seed_kind="bayesian")
     assert bayes.burned_then_passed and not bayes.burned_then_bought
+
+
+def test_audit_c1_tracker_learns_from_opponent_rejections_only():
+    """Audit C1: tracker ingests OPPONENT rejections of OUR offers only,
+    each event exactly once."""
+    from agent import STATE, update_tracker_from_history
+    game = {
+        "game_family": "bargaining", "your_player": "player_1",
+        "game_id": "audit-c1",
+        "valid_actions": {"type": "decision", "fields": {}},
+        "game_state": {
+            "money_to_divide": 1000.0, "round": 2, "max_rounds": None,
+            "horizon_known": False, "current_player": "player_1",
+            "delta_1": 0.9, "delta_2": 0.9,
+            "history": [
+                {"round": 1, "proposer": "player_1",
+                 "offer": {"player_1_gain": 700, "player_2_gain": 300},
+                 "decision": "reject"},
+            ],
+        },
+    }
+    STATE.tracker_pos.pop("audit-c1", None)
+    t = STATE.tracker("audit-c1")
+    before = (t.patience.alpha, t.patience.beta)
+    update_tracker_from_history("audit-c1", game)
+    mid = (t.patience.alpha, t.patience.beta)
+    assert mid != before
+    update_tracker_from_history("audit-c1", game)
+    after = (t.patience.alpha, t.patience.beta)
+    assert mid == after
+    STATE.tracker_pos.pop("audit-c1", None)
+
+
+def test_audit_h5_own_share_never_crumbs_under_uncertainty():
+    money = 100.0
+    game = {
+        "game_family": "bargaining", "your_player": "player_1",
+        "game_id": "audit-h5",
+        "valid_actions": {"type": "offer", "fields": {}},
+        "game_state": {
+            "money_to_divide": money, "round": 1, "max_rounds": 4,
+            "horizon_known": True, "delta_1": 0.9, "delta_2": 0.95,
+            "current_player": "player_1", "proposer": "player_1",
+            "last_offer": None, "complete_information": True,
+            "messages_allowed": False, "history": [],
+        },
+    }
+    a = bargaining.decide(game, type_confidence=0.0)
+    own = a["alice_gain"] / money
+    assert own >= bargaining.FIELD_MIN_CONCESSION * 0.99
+
+
+def test_audit_m5_floor_uses_counterpart_offers_only():
+    hist = [
+        {"round": 1, "offer": {"price": 90.0, "from_player": "player_2"},
+         "decision": "RejectOffer"},
+        {"round": 2, "offer": {"price": 300.0, "from_player": "player_1"},
+         "decision": "RejectOffer"},
+    ]
+    floor = negotiation.seller_floor_from_history(hist)
+    assert floor == 300.0  # our own 90-bid must NOT count as their floor

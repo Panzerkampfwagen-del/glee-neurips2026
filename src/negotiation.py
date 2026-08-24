@@ -93,19 +93,17 @@ def _min_capture(rounds_left: int | None, known_opp: bool) -> float:
 
 
 def seller_floor_from_history(history: list) -> float | None:
-    """Lowest price the counterpart ever offered (their revealed floor proxy)."""
+    """Lowest price the COUNTERPART ever offered (audit M5: our own bids are
+    not evidence of their floor)."""
     prices = []
     for entry in history or []:
         offer = entry.get("offer") or {}
-        if isinstance(offer, dict) and isinstance(offer.get("price"), (int, float)):
+        if isinstance(offer, dict) and isinstance(offer.get("price"), (int, float))                 and offer.get("from_player") == "player_1":
             prices.append(float(offer["price"]))
-        if isinstance(entry.get("counteroffer"), (int, float)):
-            prices.append(float(entry["counteroffer"]))
     return min(prices) if prices else None
 
 
 def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
-           type_confidence: float = 0.0,
            aggression_scale: float = 1.0) -> dict:
     st = compile_negotiation(game)
     action_type = game["valid_actions"]["type"]

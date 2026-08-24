@@ -88,7 +88,15 @@ def decide(game: dict, opp_delta_hat: float = DEFAULT_DELTA_OPP_PRIOR,
         spe_frac = opp_share / money if money > 0 else 0.5
         blended_frac = type_confidence * spe_frac + (1.0 - type_confidence) * max(
             spe_frac, FIELD_MIN_CONCESSION)
-        opp_share = max(0.02 * money, min(blended_frac * money, money))
+        # Symmetric own-share floor (audit H5): parity-disadvantaged proposers
+        # must not hand away ~97% of the pot even when SPE says so — bottom-
+        # decile payoffs in every game where we open and they close.
+        my_spe_frac = 1.0 - spe_frac
+        min_own_frac = (type_confidence * my_spe_frac
+                        + (1.0 - type_confidence) * max(my_spe_frac, FIELD_MIN_CONCESSION))
+        opp_share = min(opp_share, money * (1.0 - min_own_frac))
+
+        opp_share = max(0.02 * money, min(opp_share, money))
         my_gain = money - opp_share
 
         alice = my_gain if st.my_player == "player_1" else opp_share

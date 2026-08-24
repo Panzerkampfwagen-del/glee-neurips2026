@@ -96,11 +96,10 @@ def compile_negotiation(game: dict) -> NegotiationState:
         p1_role = s.get("player_1_role", "seller")
         role = p1_role if me == "player_1" else ("buyer" if p1_role == "seller" else "seller")
     value_key = f"{me}_value"
-    my_value = float(s[value_key]) if value_key in s else None
-    if my_value is None:
-        my_value = float(s["player_1_value"] if role == "seller" and me == "player_1"
-                         else s["player_2_value"] if role == "buyer" and me == "player_2"
-                         else s.get("player_1_value", 0.0))
+    if value_key not in s:
+        # audit M9: a silent wrong-value guess poisons every downstream IR clamp
+        raise ValueError(f"negotiation state missing own value key {value_key}")
+    my_value = float(s[value_key])
     opp = "player_2" if me == "player_1" else "player_1"
     opp_value = None
     if s.get("complete_information"):

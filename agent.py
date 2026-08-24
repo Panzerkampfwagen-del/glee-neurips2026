@@ -31,6 +31,8 @@ class AgentState:
         self.profiles = ProfileStore()
         self.bargaining_trackers: dict[str, bargaining.BargainingOpponentTracker] = {}
         self.seller_policies: dict[str, persuasion.SellerPolicy] = {}
+        self.tracker_pos: dict[str, int] = {}
+        self.counted_games: set[str] = set()
 
     def tracker(self, game_id: str) -> bargaining.BargainingOpponentTracker:
         if game_id not in self.bargaining_trackers:
@@ -53,10 +55,17 @@ ABLATE = {a.strip() for a in
 GAME_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "games.jsonl")
 
 
+JSONL_MAX_BYTES = 64 * 1024 * 1024
+
+
 def log_game(game: dict, action: dict):
-    """Full replay material for forensics — schema surprises get caught here."""
+    """Full replay material for forensics — schema surprises get caught here.
+    Rotates at JSONL_MAX_BYTES to .prev (audit H6: unbounded disk growth)."""
     try:
         os.makedirs(os.path.dirname(GAME_LOG), exist_ok=True)
+        if os.path.exists(GAME_LOG) and \
+                os.path.getsize(GAME_LOG) > JSONL_MAX_BYTES:
+            os.replace(GAME_LOG, GAME_LOG + ".prev")
         with open(GAME_LOG, "a") as f:
             f.write(json.dumps({"t": game.get("game_id"), "s": game.get("game_state"),
                                 "a": action}) + "\n")
@@ -65,20 +74,32 @@ def log_game(game: dict, action: dict):
 
 
 def update_tracker_from_history(game_id: str, game: dict):
+    """Feed OPPONENT impatience signals to the tracker.
+
+    Evidence semantics (audit C1 fix): the signal is THE OPPONENT rejecting
+    OUR offer (proposer == me, decided_by == opp). Our own rejections of their
+    offers say nothing about THEIR patience. Each event ingested exactly once
+    per game via a processed-index watermark."""
     st = game.get("game_state") or {}
     history = st.get("history") or []
     me = game.get("your_player", "player_1")
     opp = "player_2" if me == "player_1" else "player_1"
     money = float(st.get("money_to_divide") or 1.0)
     tracker = STATE.tracker(game_id)
-    for entry in history:
-        if entry.get("decision") in ("reject", "rejected") and \
-                entry.get("proposer") not in (None, me):
-            try:
-                their_gain = float((entry.get("offer") or {}).get(f"{opp}_gain", 0.0))
+    start = STATE.tracker_pos.get(game_id, 0)
+    for i in range(start, len(history)):
+        entry = history[i]
+        if str(entry.get("decision", "")).lower() not in ("reject", "rejected"):
+            continue
+        if entry.get("proposer") != me:
+            continue
+        try:
+            their_gain = float((entry.get("offer") or {}).get(f"{opp}_gain", -1))
+            if their_gain >= 0:
                 tracker.observe_rejection(their_gain / money)
-            except (TypeError, ValueError):
-                pass
+        except ZeroDivisionError:
+            continue
+    STATE.tracker_pos[game_id] = len(history)
 
 
 def _negotiation_reject_rate(game: dict) -> float | None:
@@ -118,6 +139,9 @@ def strategy(game: dict) -> dict:
         opp_name = (game.get("opponent") or {}).get("name")
         profile = None if ("profiles" in ABLATE or "all" in ABLATE) \
             else STATE.profiles.get(opp_name)
+        if profile is not None and game_id not in STATE.counted_games:
+            STATE.counted_games.add(game_id)
+            profile.games_seen += 1
 
         if family == "bargaining":
             update_tracker_from_history(game_id, game)
@@ -130,7 +154,8 @@ def strategy(game: dict) -> dict:
                 if profile is not None and profile.implied_delta:
                     w = min(0.5, profile.games_seen / 10.0)
                     delta_hat = (1 - w) * delta_hat + w * profile.implied_delta
-                raw = bargaining.decide(game, opp_delta_hat=delta_hat)
+                raw = bargaining.decide(game, opp_delta_hat=delta_hat,
+                                        type_confidence=tracker.patience.confidence())
                 if profile is not None:
                     profile.implied_delta = round(tracker.delta_hat(), 3)
         elif family == "negotiation":
@@ -151,8 +176,12 @@ def strategy(game: dict) -> dict:
             seed = None if ("profiles" in ABLATE or "all" in ABLATE) \
                 else (profile.buyer_kind if profile else None)
             policy = STATE.seller_policy(game_id)
+            if seed and policy.fresh():
+                # audit H2: apply the profile seed directly — the constructor
+                # branch was unreachable because the policy already existed
+                policy.burned_then_bought = seed == "myopic"
+                policy.burned_then_passed = seed == "bayesian"
             raw = persuasion.decide(game, policy=policy,
-                                    seed_kind=seed if policy.fresh() else None,
                                     disable_signal_regime="signal_regime" in ABLATE)
             if profile is not None and policy.burned_then_bought:
                 pass  # kind inferred in-game; persisted below via history kind
@@ -233,7 +262,9 @@ def strategy(game: dict) -> dict:
     except Exception:
         logger.exception("strategy failure on %s; using safe action", game.get("game_id"))
         from src.safety import safe_action
-        return safe_action(game)
+        fb = safe_action(game)
+        log_game(game, fb)
+        return fb
 
 
 def main():
