@@ -1,2 +1,4 @@
 {"t": "2026-08-24T23:04:28+07:00", "scores": {"bargaining": {"r": 1879.97, "g": 1694}, "negotiation": {"r": 1374.15, "g": 1700}, "persuasion": {"r": 1219.68, "g": 1680}}, "active": 6, "errors_recent": 0, "sim_ranks": 542, "agent_alive": 1}
 {"t": "2026-08-24T23:56:01+07:00", "scores": {"bargaining": {"r": 1889.15, "g": 1776}, "negotiation": {"r": 1372.5, "g": 1780}, "persuasion": {"r": 1212.27, "g": 1758}}, "active": 1, "errors_recent": 0, "sim_ranks": 556, "agent_alive": 1}
+{"t": "2026-08-25T00:00:02+07:00", "scores": {"bargaining": {"r": 1895.19, "g": 1779}, "negotiation": {"r": 1382.49, "g": 1785}, "persuasion": {"r": 1215.85, "g": 1760}}, "active": 5, "errors_recent": 0, "sim_ranks": 558, "agent_alive": 1}
+{"t": "2026-08-25T01:00:02+07:00", "scores": {"bargaining": {"r": 1901.9, "g": 1831}, "negotiation": {"r": 1393.95, "g": 1835}, "persuasion": {"r": 1221.98, "g": 1809}}, "active": 7, "errors_recent": 0, "sim_ranks": 594, "agent_alive": 1}
