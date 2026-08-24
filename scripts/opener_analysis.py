@@ -130,9 +130,11 @@ def main():
         pay = float(c.get("payoff_p1" if role == "seller" else "payoff_p2") or 0)
         t = table[role][b]
         t[0] += 1
-        t[2] += pay
+        norm = pay / g["value"] if g["value"] else 0.0   # scale-free
+        t[2] += norm
         if c.get("outcome") == "agreement":
             t[1] += 1
+            t[2] += 0  # normalized already includes zero-deal rows
 
     out = {r: {str(b): {"n": v[0], "deals": v[1], "payoff_sum": round(v[2], 2)}
                for b, v in sorted(table[r].items())} for r in ("seller", "buyer")}

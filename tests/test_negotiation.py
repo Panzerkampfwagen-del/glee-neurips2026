@@ -108,3 +108,26 @@ def test_unlimited_horizon_deadlock_decay():
     }
     # price 185 <= our value 190 (IR), capture tiny but round > 14 -> accept
     assert negotiation.decide(game)["decision"] == "AcceptOffer"
+
+
+def test_empirical_opener_pricing_used_when_table_present(tmp_path):
+    import json
+    from unittest import mock
+    table = {"seller": {"1.4": {"n": 9, "deals": 9, "payoff_sum": 3.84}},
+             "buyer": {}}
+    fake = tmp_path / "opener_outcome_table.json"
+    fake.write_text(json.dumps(table))
+    with mock.patch("src.opener_pricing._TABLE_PATH", str(fake)):
+        from src import opener_pricing
+        opener_pricing._TABLE_PATH = str(fake)
+        price, source = opener_pricing.priced_opener(100.0, True)
+        assert source == "empirical"
+        assert abs(price - 140.0) < 1e-6
+
+
+def test_legacy_fallback_when_no_table():
+    from unittest import mock
+    import src.opener_pricing as op
+    with mock.patch.object(op, "_load_table", return_value={}):
+        price, source = op.priced_opener(100.0, True)
+        assert source == "legacy" and abs(price - 210.0) < 1e-6

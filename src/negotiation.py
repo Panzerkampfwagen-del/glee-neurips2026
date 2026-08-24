@@ -4,8 +4,10 @@ Core: maintain interval estimates of the opponent's private value from their
 offers and accept/reject behavior; price inside the estimated ZOPA; anchor
 aggressively-but-plausibly at open; never reject an individually-rational
 offer when rounds are scarce; walk away only on near-certain negative surplus.
+Openers use empirical payoff-per-value pricing when data is available.
 """
 
+from . import opener_pricing
 from .state import compile_negotiation
 
 
@@ -139,9 +141,14 @@ def decide(game: dict, opp_value_hat: tuple[float, float] | None = None,
             urgent = st.horizon_known and st.rounds_left is not None and st.rounds_left <= 2
 
             if last is None:
-                target = opener(v, st.is_seller, False,
-                                opp_hint=(hi_hat if st.is_seller else lo_hat),
-                                aggression_scale=aggression_scale)
+                emp_price, emp_src = opener_pricing.priced_opener(
+                    v, st.is_seller)
+                if emp_src == "empirical":
+                    target = emp_price
+                else:
+                    target = opener(v, st.is_seller, False,
+                                    opp_hint=(hi_hat if st.is_seller else lo_hat),
+                                    aggression_scale=aggression_scale)
             elif st.is_seller:
                 # concede toward the estimated buyer max, never below our value
                 anchor = max(v, last * 0.9)
