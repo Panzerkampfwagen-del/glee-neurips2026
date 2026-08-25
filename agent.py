@@ -6,6 +6,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import json
 import logging
 import os
@@ -58,7 +59,7 @@ GAME_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "gam
 JSONL_MAX_BYTES = 64 * 1024 * 1024
 
 
-def log_game(game: dict, action: dict):
+def log_game(game: dict, action: dict, origin: str = "strategy"):
     """Full replay material for forensics — schema surprises get caught here.
     Rotates at JSONL_MAX_BYTES to .prev (audit H6: unbounded disk growth)."""
     try:
@@ -68,7 +69,10 @@ def log_game(game: dict, action: dict):
             os.replace(GAME_LOG, GAME_LOG + ".prev")
         with open(GAME_LOG, "a") as f:
             f.write(json.dumps({"t": game.get("game_id"), "s": game.get("game_state"),
-                                "a": action}) + "\n")
+                                "a": action,
+                                "origin": origin,
+                                "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+                                }) + "\n")
     except Exception:
         pass
 
@@ -133,6 +137,7 @@ def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:
 
 
 def strategy(game: dict) -> dict:
+    fb = False
     try:
         family = game["game_family"]
         game_id = game["game_id"]
@@ -254,15 +259,16 @@ def strategy(game: dict) -> dict:
         logger.info("[%s %s r%s] %s -> %s", family, game_id[:8],
                     game.get("game_state", {}).get("round"),
                     game["valid_actions"]["type"], action)
-        log_game(game, action)
+        log_game(game, action, origin="fallback" if fb else "strategy")
         return action
 
     except Exception:
+        fb = True
         logger.exception("strategy failure on %s; using safe action", game.get("game_id"))
         from src.safety import safe_action
-        fb = safe_action(game)
-        log_game(game, fb)
-        return fb
+        fb_action = safe_action(game)
+        log_game(game, fb_action, origin="fallback")
+        return fb_action
 
 
 def main():
