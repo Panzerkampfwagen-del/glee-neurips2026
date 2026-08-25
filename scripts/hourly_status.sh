@@ -9,6 +9,10 @@ STATS=$(curl -s --max-time 10 -H "Authorization: Bearer $KEY" \
 ERR=$(tail -2000 data/logs/live.log 2>/dev/null | grep -c ERROR)
 SIM=$(grep -ac 'sim-rank' data/logs/live.log 2>/dev/null)
 ALIVE=$(pgrep -fc 'agent.py --conc')
+# self-heal: relaunch supervisor if the agent is dead
+if [ "$ALIVE" = "0" ]; then
+  setsid nohup ./scripts/live_supervisor.sh data/logs/live.log >> data/logs/cron.log 2>&1 < /dev/null &
+fi
 python3 - "$OUT" "$STATS" "$ERR" "$SIM" "$ALIVE" <<'PY'
 import json, sys, datetime
 out, stats, err, sim, alive = sys.argv[1:6]
