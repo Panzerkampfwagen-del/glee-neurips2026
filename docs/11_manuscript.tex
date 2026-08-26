@@ -1,0 +1,338 @@
+% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper
+% NOTE: self-contained article preamble for drafting; swap to the official
+% NeurIPS 2026 workshop style file (neurips_2026.sty) at submission.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+
+\title{\textbf{Cheap Talk Is Not Evidence:\\ A Solver-in-the-Loop Architecture for\\ Language-Based Economic Games}}
+\author{Anonymous --- GLEE Competition Papers Track, IAB Workshop @ NeurIPS 2026\\
+\normalsize Competition agent public id: \texttt{7b2446de-071d-4b13-914d-b404f5ce2129}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+LLM agents competing in multi-turn economic games fail not at language but at two quieter tasks: computing numbers and updating beliefs. We present the design and field results of \texttt{agent01}, a agent holding sustained above-1900 displayed ratings across two GLEE game
+families and rapid gains in the third---bargaining, negotiation, and persuasion---built on a principle we call \emph{solver-in-the-loop}: every numeric decision is made by deterministic, unit-tested game-theoretic code, while the LLM is confined to drafting strategic language and ranking candidate actions whose payoffs were computed in code. Our central scientific finding emerged from a live failure: the agent's buyer module stopped trading in an expected-positive market after observing two low-quality draws, because its deception penalty treated an \emph{uninformative} signal---a seller who always says ``yes''---as evidence about exogenous quality. We formalize the distinction between cheap-talk \emph{honesty} and cheap-talk \emph{informativeness} \citep{crawford1982strategic}, show that prior-style deception penalties are mathematically inapplicable when signals are constant, and validate the correction in a paired experiment: the regime-classified buyer recovers $+794$ points per game (95\% CI $\pm 87$) on affected configurations, with honest and lying sellers producing \emph{identical} payoff distributions by construction. More broadly, we contribute a six-item failure taxonomy distilled from ${\sim}3{,}400$ live competition games---schema-drift fallback inversion, tracker signal inversion, subgame-perfect fragility against non-equilibrium populations, and others---each converted into a permanent regression contract. Across $3{,}400+$ rated games, the agent's bargaining rating rose from 904 to a peak of 2{,}166 under strength-adjusted scoring. The transferable lesson for LLM agents in structured environments: \emph{solvers compute; models communicate}.
+\end{abstract}
+
+\section{Introduction}
+The GLEE competition \citep{shapira2024glee} evaluates autonomous agents in three two-player, language-based economic games: \textbf{bargaining} (alternating-offer division of a shrinking pie), \textbf{negotiation} (bilateral trade with private valuations), and \textbf{persuasion} (repeated sale of products whose quality is hidden from the buyer). Agents act through an API under real constraints---120 seconds per move, 60 requests/minute, a shared matchmaking pool of humans, heterogeneous competitor agents, and organizer-run LLM baselines---and are scored by \emph{payoff percentile against the field on the same game configuration and role, adjusted for opponent strength}. The metric rewards sustained above-median play and punishes catastrophic outcomes disproportionately: an abandoned or timed-out game is scored at the 5th percentile.
+
+Two observations motivate our design.
+
+\paragraph{LLM agents fail economic games at numbers and beliefs, not at language.} In our early live play and in the benchmark's published analysis, LLM negotiators reject profitable splits out of fairness concerns, anchor mechanically on first offers, miscompute discounted values, and---most consequentially---update beliefs in ways that violate the causal structure of the game. These are not prompting failures; they are failures of architecture. A language model asked to ``play well'' must simultaneously parse rules, track state, model an opponent, do arithmetic, and emit valid JSON. Errors compound silently.
+
+\paragraph{Scoring converts small systematic errors into large rating losses.} Percentile scoring compares each outcome against the field distribution on identical configurations. A single class of systematically mishandled configurations produces a persistent drag that late-stage rating dynamics---learning rates decaying to 0.2\% per game---make expensive to undo.
+
+\paragraph{Key idea: solver-in-the-loop.} A deterministic, unit-tested game-theoretic core computes every numeric decision (acceptance thresholds, offer prices, signaling mixtures); the LLM is restricted to (i) drafting strategic messages consistent with computed actions, and (ii) ranking pre-computed candidate actions on pivotal moves by simulating the opponent. Belief updating over opponent types lives in explicit Bayesian filters---never in LLM self-reflection.
+
+\paragraph{What we discovered.} The architecture survived $3{,}400+$ rated games with zero degraded-path events (\S6). The scientifically interesting findings came from failures at the boundary between theory and population: pure subgame-perfect strategies are exploitable against fairness-rejecting populations (\S5.2); deception penalties that ignore whether a cheap-talk signal is \emph{informative} lock an agent out of positive-expected-value markets (\S5.3); and a one-line regex error in enum validation silently transformed the entire agent into an unconditional accept-bot for hundreds of games (\S5.1)---invisible to component tests, visible only through outcome forensics.
+
+\section{Related Work}
+\paragraph{LLM agents in strategic games.} Suspicion-Agent \citep{guo2024suspicion} demonstrated GPT-4 playing imperfect-information card games via theory-of-mind prompting while noting it could not beat equilibrium solvers; Agent-Pro \citep{zhang2024agentpro} evolved negotiation policies via reflection; PokerBench \citep{zhuang2025pokerbench} measured GPT-4 at only 53.6\% optimal-action agreement on poker spots and showed SFT-from-solver closes much of the gap. Cicero \citep{fa2022cicero} grounded dialogue generation in planned intents for Diplomacy; Strategist \citep{light2025strategist} improved LLM play via bi-level search over strategy text. OG-Narrator \citep{narrator2024} reported ${\sim}10\times$ profit gains from decoupling offer selection (deterministic) from narration (LLM) in bargaining dialogues---the closest precedent for our solver/LLM split, which we extend to three game families, opponent modeling, and field-calibrated safety floors.
+
+\paragraph{Game-theoretic foundations.} Alternating-offer bargaining with discounting \citep{stahl1972bargaining,rubinstein1982perfect} yields stationary splits proportional to relative impatience and, under finite horizons, extreme backloaded demands by subgame perfection. Bilateral trade under private values admits no efficient dominant-strategy mechanism \citep{myerson1983efficient}. Bayesian persuasion \citep{kamenica2011bayesian} characterizes optimal signaling as concavification of the sender's value function---closed-form for binary state/action pairs, which covers GLEE persuasion. Reputation effects predict end-game defection windows \citep{kreps1982reputation} that we exploit and defend against.
+
+\paragraph{Equilibrium vs.\ populations.} NFSP \citep{heinrich2016nfsp}, PSRO \citep{lanctot2017psro}, and DORA \citep{bakhtin2021dora} establish self-play equilibrium learning; DORA shows self-play equilibria can be \emph{off-population}. Cicero succeeded against humans by regularizing toward population-typical play. Our live observation of SPE-crumbs rejection (\S5.2) confirms this in economic games at accessible scale, motivating \emph{population-compatible equilibrium}: analytic equilibria softened by bidirectional behavioral floors, relaxed only under opponent-model confidence.
+
+\paragraph{Belief updating in LLMs.} BIP-ALM/MMToM-QA \citep{jin2024mmtom} show structured Bayesian inverse planning beats raw LLM inference about beliefs; SymbolicToM \citep{sclar2023symbolictom} shows symbolic belief ledgers beat prose tracking; ToMBench \citep{chen2024tombench} finds chain-of-thought does not reliably improve LLM theory of mind. Our explicit type-posterior filters follow this line; recent evaluations report frontier models' type-beliefs are flat or worsening across negotiation rounds [CITATION NEEDED], consistent with keeping all belief arithmetic in code.
+
+\section{Problem Formulation}
+Configurations are drawn server-side from a grid of ${\approx}960$ settings spanning horizons, sums, valuations, inflation rates, and information conditions. We state what the solver consumes; full rules in the GLEE documentation \citep{shapira2024glee}.
+
+\textbf{Bargaining.} Pot $M$; alternating proposers; receiver accepts ($x \geq$ threshold), rejects, or walks away ($0$ for both). Player $i$'s money inflates by factor $\delta_i \in (0,1]$ per round ($\delta_{\text{opp}}$ hidden under incomplete information). Horizons: finite-known ($R$ rounds) or absent.
+
+\textbf{Negotiation.} Seller value $s$, buyer value $b$ (private unless \texttt{complete\_information}); alternating price offers; accept / reject-with-counter / walk away. Surplus exists iff $s \le b$. Horizons: single-round take-it-or-leave-it (TIOLI), capped, or unlimited.
+
+\textbf{Persuasion.} Rounds $r=1..T$: quality $q_r \sim \mathrm{Bernoulli}(p)$ drawn independently each round (buyer utility $v$ if high, $u=0$ if low; fixed price $\pi$). Seller observes $q_r$, sends message/recommendation; buyer buys or passes; payoffs accumulate; purchased units alone reveal realized quality to the buyer. Seller policies in the field range from always-recommend (``uninformative'') to selectively honest (``informative'') and deceptive.
+
+\textbf{Scoring.} Payoff $\to$ percentile vs.\ field on identical configuration+role $\to$ rating $2000 + 8000(\mathrm{pct}-0.5)$; displayed rating shrinks toward 1000 by $g/(g+30)$; overall score averages three family ratings.
+
+\section{Method: Solver-in-the-Loop}
+
+\subsection{Architecture}
+A dispatcher routes games to per-family handlers sharing: (i) a typed \textbf{state compiler}; (ii) per-family deterministic \textbf{solver cores}; (iii) an \textbf{opponent layer} (in-game trackers, cross-game profile store, Bayesian type posteriors); (iv) an \textbf{LLM shell} (Groq \texttt{gpt-oss-20b}/\texttt{120b} behind a 72-RPM token bucket) used only for pivotal-move ranking and message drafting. Every LLM path falls back deterministically on failure; a validator repairs sums/enums pre-submission; a safe-action table guarantees legality under any exception; provenance (origin tag, timestamp, full state) is logged per move.
+
+\subsection{Bargaining}
+With known horizon and $k$ offers remaining, backward induction over alternating proposer roles gives pie-values
+\begin{align}
+V_{\mathrm{ip}}[k] &= M - \min(\delta_{\mathrm{opp}} V_{\mathrm{tp}}[k{-}1], M), &
+V_{\mathrm{tp}}[k] &= M - \min(\delta_{\mathrm{me}} V_{\mathrm{ip}}[k{-}1], M),
+\end{align}
+with $V[\cdot][0]=0$. As proposer we concede exactly the receiver's discounted continuation; as receiver we accept iff $x \ge a^\star = \delta_{\mathrm{me}} V_{\mathrm{ip}}[k{-}1]$. For unknown horizons we use the Rubinstein stationary share $s = M(1-\delta_{\mathrm{opp}})/(1-\delta_{\mathrm{me}}\delta_{\mathrm{opp}})$.
+
+\paragraph{Population floors.} Pure SPE demands crumbs that field populations reject (we once conceded 90.7\% of a pot when parity-disadvantaged; six no-deal losses arose from repeating such offers verbatim). We clamp both directions:
+\[
+x_{\mathrm{opp}} = \mathrm{clip}\!\left(x^{\mathrm{SPE}}_{\mathrm{opp}} + \epsilon_F M(1-c),\; 0.02M,\; M(1 - f(c))\right),
+\quad f(c) = c f_{\mathrm{SPE}} + (1{-}c)\max(f_{\mathrm{SPE}}, 0.36),
+\]
+where $c$ is opponent-model confidence, $\epsilon_F{=}0.06$. Unknown horizons trigger \emph{deadlock decay}: past round 14 without agreement, demanded share converges to $M/2$ over 25 rounds and the acceptance floor sinks toward token-positive. Opponent impatience is estimated by a decayed Bernoulli filter over the opponent's rejections of \emph{our} offers (each event ingested once via a watermark index), blended into $\hat\delta_{\mathrm{opp}}$ by confidence weight.
+
+\subsection{Negotiation}
+Directional interval estimates $[\ell,h]$ on the counterpart's private value: their bids raise $\ell$ (as seller), their asks lower $h$ (as buyer); rejection of our price $q$ tightens the bound against us; acceptance pins it. Counters converge toward the ZOPA midpoint $((\hat s + \hat b)/2)$ under complete information, else along a round-gated concession path. Acceptance requires captured surplus fraction
+$\mathrm{cap} = (x - z_\ell)/(z_h - z_\ell) \ge \tau(k)$,
+with $\tau(k)=0.35\min(1,(k{-}1)/4+0.3)$ for known-type counterparts, decaying to zero on final rounds, and to zero past round 14 on unlimited horizons (a thin deal strictly dominates a bottom-percentile no-deal). Walk-away fires only on near-certain negative surplus. Under complete information we counter immediately at $(s+b)/2$. Openers use empirically priced ratios when field data is available (\S5.5).
+
+\subsection{Persuasion: signaling, regimes, buyer filter}
+\paragraph{Seller.} Optimal binary-state signaling is the concave closure of sender value over posterior beliefs \citep{kamenica2011bayesian}; with $u{=}0$ it reduces to pooling or a two-signal split at threshold $\beta^\star = \pi/v$. Recommendations sample from the resulting mixture, horizon-adjusted: exploitation rises near horizon end only against buyers proven to re-buy after burns, and collapses to fully honest signaling after three consecutive buyer passes.
+
+\paragraph{Buyer.} Classify history into a signal regime. With $\rho$ the fraction of yes-claims over classified rounds,
+\[
+\mathrm{regime} =
+\begin{cases}
+\text{uninformative} & \rho \ge 0.95 \text{ or } \rho \le 0.05,\ n \ge 3\\
+\text{informative} & \text{otherwise}
+\end{cases}
+\]
+In the uninformative regime the claim is independent of quality, so $P(q{=}\mathrm{high}\mid \mathrm{history}) = p$ regardless of burns and the buyer trades iff $pv + (1-p)u > \pi$. In the informative regime we maintain class-conditioned decayed Beta posteriors $P(\mathrm{high}\mid yes)$, $P(\mathrm{high}\mid no)$ blended with the prior, a recency-limited deception discount, and a tripled evidence bar after two consecutive low purchases. Only purchased rounds reveal quality; unpurchased rounds are censored.
+
+\paragraph{Cross-game profiles} persist per-named-opponent aggregates (implied $\delta$, reject rate, buyer type); identity is disclosed in half of matches, so robust defaults cover the rest.
+
+\subsection{LLM shell}
+On pivotal offers (opening offer, $\le 2$ rounds left, deadlock drift $<5\%$, confident exploitability signal), the solver emits ${\sim}5$ candidates; Groq models estimate acceptance probabilities conditioned on the profiled opponent's observed behavior; selection maximizes $P_i g_i$ with code-computed gains $g_i$. Pivotal messages are drafted subject to consistency with the chosen action and length caps. Shared token bucket (72 RPM across keys), per-move deadline guard, deterministic fallback everywhere.
+
+\section{Experimental Setup}
+Live rated play, Aug 23--26, 2026: $3{,}400{+}$ completed games (${<}{\sim}1{,}700$ per family), concurrency 8, continuous queueing with drain-on-exit supervision. Forensics join per-move JSONL logs with platform results. Component correctness: 65-test suite including property tests (offer-sum integrity, IR clamps, signaling-grid optimality) and replay fixtures reproducing every incident in \S5.4. The ablation pilot uses scripted opponents, n=60/arm, preregistered arms. Paired causal tests use n=200 seeds/arm with shared randomness.
+
+\section{Main Field Results}
+
+\paragraph{Threats to validity.} Our field results come from a single
+deployed system on a single account against a non-stationary opponent pool;
+rating trajectories are time-stamped platform records, not controlled
+comparisons. Controlled instruments are limited to the paired causal test
+(Table~\ref{tab:f6}) and the scripted-opponent ablation pilot
+(Table~\ref{tab:t2}); live numbers should be read accordingly.
+
+\paragraph{Rating trajectory (Table~\ref{tab:t1}, Fig.~1).} Displayed ratings rose from 904/958/1048 to peaks of 2166/1573/1490 within 72 hours. Post-deploy piecewise slopes per 100 games: bargaining $+62$; negotiation $+19$ with a mid-period dip handled by \S5.4's decay; persuasion $+5$ early, steepening after \S5.3's fix.
+
+\begin{table}[t]\centering\small
+\caption{Displayed ratings at deploy checkpoints (agent01). Shrinkage toward 1000 by $g/(g{+}30)$; raw $\approx$ displayed $\cdot (g{+}30)/g$.}
+\label{tab:t1}
+\begin{tabular}{lrrrrr}
+\toprule
+Checkpoint (UTC+7) & Barg. & Neg. & Pers. & $\Sigma$ games & Marker \\
+\midrule
+Aug 23 22:50 & 955 & 1082 & 1103 & 284 & gen-2 solver core \\
+Aug 24 09:15 & 1408 & 1401 & 1145 & 1374 & post-reboot restart \\
+Aug 24 14:46 & 1737 & 1529 & 1147 & 2905 & +profiles, +F6 \\
+Aug 25 18:00 & 1987 & 1456 & 1488 & 7076 & +sim-ranking \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Deal integrity (Table~\ref{tab:t4}).} In the final analysis window, 96/96 completed negotiation games ended in agreements (zero no-deals), median 2 rounds-to-agreement, quoted margins strictly inside own-value bounds (median $+11.7\%$ surplus retained, $n{=}905$ quotes) --- the IR clamps hold in production.
+
+\paragraph{Operational alignment.} Over 3{,}273 consecutive logged moves in an ${\sim}18$-hour production
+window: 100.0\% strategy-path submissions, 0.0\% degraded-fallback events,
+across all families; simulation ranking fired on 710+ pivotal offers; no
+latency-attributed timeouts after the move-deadline guard.
+
+\section{Case Study: Cheap Talk Is Not Evidence (F6)}
+The original buyer applied a deception penalty whenever recent purchases included low-quality units. Against an always-yes seller, quality draws are independent of the claim: consecutive lows occur by chance with probability $(1-p)^2$, yet the penalty read them as adversarial intent, suppressed buying for the match remainder, and forfeited an EV-positive market ($p{=}0.5$, $v{=}300$, $\pi{=}100$, EV$=$150): the old policy bought 2/20 rounds.
+
+\paragraph{Correction.} Regime classification gates all belief updates (\S4.4): constant claims carry no information, so base-rate rules apply and burns are ignored; varying claims activate class-conditioned posteriors.
+
+\begin{table}[t]\centering\small
+\caption{Paired causal test, n=200 seeds/arm, EV-positive configuration. Gains in points/game; CI by paired-seed bootstrap-normal approximation.}
+\label{tab:f6}
+\begin{tabular}{lrrr}
+\toprule
+Seller type & New buyer & Old buyer & Paired $\Delta$ (95\% CI) \\
+\midrule
+Always-yes honest & 1010.5 & 216.5 & $\mathbf{+794.0 \pm 86.6}$ \\
+Always-yes liar & 1010.5 & 216.5 & $\mathbf{+794.0 \pm 86.6}$ \\
+Selective informative & 305.0 & 199.0 & $\mathbf{+106.0 \pm 55.3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Honest and liar rows are identical \emph{by construction}: no decision rule
+can separate honest from lying constant signals, since both induce identical
+likelihoods over observations. The equality is therefore not an empirical
+accident but the theory's content --- any reported difference would indicate a
+simulator artifact. The old penalty updated on noise. The informative row confirms the defense still operates where claims genuinely differentiate. Though elementary in information-economics terms, we find this honesty-invariance property routinely violated in LLM-agent belief designs that treat detected ``lies'' as generic distrust triggers.
+
+\section{Failure Taxonomy from Live Play}
+Each incident became a permanent regression fixture; together they form our alignment methodology (\S8).
+
+\begin{table}[t]\centering\small
+\caption{Field-failure taxonomy (F-series), condensed. Full forensics in project repository.}
+\label{tab:failures}
+\begin{tabular}{p{0.5cm}p{3.6cm}p{4.6cm}p{5.2cm}}
+\toprule
+\# & Incident & Root cause & Generalizable lesson \\
+\midrule
+F1 & Accepted every offer for ${\sim}15$ games & Enum validation split prose on ``or''; silent fallback = unconditional accept & Validators need adversarial fixtures of the platform's own formats \\
+F2 & Buyer passed 18/20 rounds on EV-positive config & Burn-lockout penalty (\S6) & Exploration constraints in censored-feedback markets \\
+F3 & Walked away from visible-surplus trade & Rejection semantics ignored who-rejected-whose-offer & Directional belief updates \\
+F4 & Bug-era percentiles depressed ratings persistently & Rating $\eta$ decay makes early damage sticky & Deploy markers + volume dilution \\
+F5 & Reboot killed session mid-games $\to$ ban & Process-group kill; no drain & Supervised supervision; drain-before-exit contract \\
+F6 & Market lockout (above) & Regime-blind penalty & Causal structure constrains belief updates \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Opener Pricing from Field Data}
+Mining logged negotiation games ($n{=}142$ with visible values) yielded empirical deal-rate curves by opener ratio: aggressive anchors (1.8--2.0$\times$ seller value) closed 42--47\% of deals; moderate anchors ($\le$1.4$\times$) closed 13/13 sampled games at equal-or-better margins (Table~\ref{tab:openers}). Phase B deploys $\pi^\star = \arg\max_r \widehat{P}(\mathrm{deal}\mid r)\,\mathbb{E}[g \mid r,\mathrm{deal}]$ behind an ablation flag. Buckets remain thin (n=3--41) and carry a selection confound --- opener
+ratio co-varies with configuration difficulty --- so we treat the gap as
+hypothesis-generating: Phase-B pricing ships behind an ablation flag, and the
+deployed delta ⟨NEEDS EXPERIMENT: accumulating⟩ will adjudicate.
+
+\begin{table}[t]\centering\small
+\caption{Seller opener ratio vs.\ outcome (n=142 logged games).}
+\label{tab:openers}
+\begin{tabular}{lrrr}
+\toprule
+Opener / own value & $n$ & Deal rate & Avg payoff (abs.) \\
+\midrule
+$\le$1.4 & 13 & 1.00 & 34k--89k \\
+1.8 & 36 & 0.47 & 25k \\
+2.0 & 33 & 0.42 & 34k \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Ablation Studies}
+Preregistered ladder (L0 solver-only $\to$ L1 +opponent-model $\to$ L2/L3 +profiles), scripted opponents, n=60/arm:
+
+\begin{table}[t]\centering\small
+\caption{T2 pilot ladder. Negotiation arms indistinguishable because the arena did not feed histories to states (arena gap, not component finding).}
+\label{tab:t2}
+\begin{tabular}{lccc}
+\toprule
+Arm & Bargaining (share) & Negotiation (surplus) & Persuasion (\$) \\
+\midrule
+L0 & 0.236 & 0.408 & 114.3 \\
+L1 (+tracker) & 0.236 & 0.408 & 112.8 \\
+L2 (+profiles) & 0.198 & 0.408 & 113.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Readings: (i) negotiation arms cannot discriminate without histories --- arena gap documented; (ii) bargaining shows a small inversion (L0/L1 $>$ L2/L3, ${\sim}3.7$pp): the tracker overfits $\hat\delta$ to two deterministic opponents; directional only at n=60, and consistent with live evidence that tracker value concentrates in heterogeneous-field games; (iii) persuasion deltas fall within noise because both arms include the post-F6 buyer --- the isolated causal instrument is Table~\ref{tab:f6}. Profile rungs require named recurring opponents to activate. ⟨NEEDS EXPERIMENT: named-opponent ladder, n$\ge$120, camera-ready⟩
+
+\section{Error Analysis}
+Provenance over 3{,}273 consecutive production moves: 100\% strategy-path, 0\% fallbacks, 0 latency-attributed timeouts after the deadline guard. Residual error budget concentrates in three deliberate classes: thin-deal acceptance on deadlocked unlimited-horizon games; TIOLI rejections above valuation (forced-correct); simulator probability degeneracy under token starvation (mitigated; sim-ranking excluded from headline claims pending longer accumulation).
+
+\section{Discussion}
+\textbf{What transfers.} Wherever an environment has computable structure, LLM wrappers should delegate computation to tested code and reserve the model for perception and expression. Our worst failures occurred exactly where that boundary leaked: arithmetic in prompts, beliefs in reflections, validation in string operations.
+
+\textbf{Population compatibility as a first-class objective.} Equilibrium answers ``what is unbeatable''; competition scoring asks ``what beats this field.'' These diverge measurably. Confidence-gated behavioral floors calibrated on field data resolved the divergence profitably, echoing human-regularization lessons from Diplomacy-scale systems at accessible scale.
+
+\textbf{Cheap-talk discipline.} Before updating on counterpart communication, ask what it could vary with. If nothing, the update mines noise. This check should be default in any repeated-interaction agent design.
+
+\section*{Limitations}
+Solver constants were tuned on this window's population and may not transfer; they are isolated as four named parameters with ablation flags. Opener tables reflect ${\sim}150$ visible-value games. Opponent profiles assume name stability. The persuasion ceiling is structural (EV-negative configurations force zero-payoff play). We evaluate one system on one account. Simulator probabilities showed token-starvation degeneracy; sim-ranking claims are limited to pivotal subsets.
+
+\section*{Reproducibility}
+Pure-Python package over a pinned SDK; 65-test public suite including all F-series replay fixtures; offline harness with scripted opponents; seeded paired experiments; JSONL replay format specification; configuration grid reference in the GLEE documentation. Live-rating figures are time-stamped platform records; all other experiments re-run without API keys.
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{99}
+
+\bibitem[Shapira et al.(2024)]{shapira2024glee}
+E.~Shapira, O.~Madmon, I.~Reinman, S.J.~Amouyal, R.~Reichart, M.~Tennenholtz.
+\newblock GLEE: A Unified Framework and Benchmark for Language-Based Economic Environments.
+\newblock arXiv:2410.05254, 2024.
+
+\bibitem[St{\aa}hl(1972)]{stahl1972bargaining}
+I.~St{\aa}hl. \newblock Bargaining Theory. Stockholm School of Economics, 1972.
+
+\bibitem[Rubinstein(1982)]{rubinstein1982perfect}
+A.~Rubinstein. \newblock Perfect Equilibrium in a Bargaining Model.
+\newblock \emph{Econometrica}, 50(1):97--109, 1982.
+
+\bibitem[Nash(1950)]{nash1950bargaining}
+J.~Nash. \newblock The Bargaining Problem. \emph{Econometrica}, 18(2):155--162, 1950.
+
+\bibitem[Myerson and Satterthwaite(1983)]{myerson1983efficient}
+R.~Myerson, M.~Satterthwaite. \newblock Efficient Mechanisms for Bilateral Trading.
+\newblock \emph{Journal of Economic Theory}, 29(2):265--281, 1983.
+
+\bibitem[Kamenica and Gentzkow(2011)]{kamenica2011bayesian}
+E.~Kamenica, M.~Gentzkow. \newblock Bayesian Persuasion.
+\newblock \emph{American Economic Review}, 101(6):2590--2615, 2011.
+
+\bibitem[Crawford and Sobel(1982)]{crawford1982strategic}
+V.~Crawford, J.~Sobel. \newblock Strategic Information Transmission.
+\newblock \emph{Econometrica}, 50(6):1431--1451, 1982.
+
+\bibitem[Kreps and Wilson(1982)]{kreps1982reputation}
+D.~Kreps, R.~Wilson. \newblock Reputation and Imperfect Information.
+\newblock \emph{Journal of Economic Theory}, 27(2):253--279, 1982.
+
+\bibitem[Heinrich and Silver(2016)]{heinrich2016nfsp}
+J.~Heinrich, D.~Silver. \newblock Deep Reinforcement Learning from Self-Play in Imperfect-Information Games.
+\newblock ICML, 2016.
+
+\bibitem[Lanctot et al.(2017)]{lanctot2017psro}
+M.~Lanctot et al. \newblock A Unified Game-Theoretic Approach to Multiagent Reinforcement Learning.
+\newblock NeurIPS, 2017.
+
+\bibitem[Bakhtin et al.(2021)]{bakhtin2021dora}
+A.~Bakhtin et al. \newblock No-Press Diplomacy from Scratch.
+\newblock NeurIPS, 2021.
+
+\bibitem[FAIR(2022)]{fa2022cicero}
+Noam Brown et al. (Meta FAIR).
+\newblock Human-Level Play in Diplomacy by Combining Language Models with Strategic Reasoning.
+\newblock \emph{Science}, 378(6624), 2022.
+
+\bibitem[Guo et al.(2024)]{guo2024suspicion}
+J.~Guo et al. \newblock Suspicion-Agent: Playing Imperfect Information Games with Theory of Mind Aware GPT-4.
+\newblock COLM 2024 / arXiv:2309.17277.
+
+\bibitem[Zhang et al.(2024)]{zhang2024agentpro}
+W.~Zhang et al. \newblock Agent-Pro: Learning to Evolve via Policy-Level Reflection and Optimization.
+\newblock ACL 2024.
+
+\bibitem[Zhuang et al.(2025)]{zhuang2025pokerbench}
+R.~Zhuang et al. \newblock PokerBench: Training Large Language Models to Become Professional Poker Players.
+\newblock AAAI 2025 / arXiv:2501.08328.
+
+\bibitem[Light et al.(2025)]{light2025strategist}
+J.~Light et al. \newblock Strategist: Self-Improvement of LLM Decision Making by Bi-Level Tree Search.
+\newblock ICLR 2025 / arXiv:2408.10635.
+
+\bibitem[[NARRATOR](2024)]{narrator2024}
+⟨AUTHORS VERIFY⟩ \newblock Measuring and Improving Persuasiveness / Bargaining of Large Language Models (OG-Narrator).
+\newblock ACL 2024 Findings. ⟨CITATION NEEDED: exact metadata⟩
+
+\bibitem[Jin et al.(2024)]{jin2024mmtom}
+C.~Jin et al. \newblock MMToM-QA: Multimodal Theory of Mind Question Answering.
+\newblock ACL 2024.
+
+\bibitem[Sclar et al.(2023)]{sclar2023symbolictom}
+M.~Sclar et al. \newblock Minding Language Models' Language Theory of Mind.
+\newblock ACL 2023.
+
+\bibitem[Chen et al.(2024)]{chen2024tombench}
+Z.~Chen et al. \newblock ToMBench: Benchmarking Theory of Mind in Large Language Models.
+\newblock ACL 2024.
+
+\bibitem[Snell et al.(2025)]{snell2025scaling}
+C.~Snell et al. \newblock Scaling LLM Test-Time Compute Optimally Can Be More Effective than Scaling Model Parameters.
+\newblock ICLR 2025.
+
+\bibitem[Shinn et al.(2023)]{shinn2023reflexion}
+N.~Shinn et al. \newblock Reflexion: Language Agents with Verbal Reinforcement Learning.
+\newblock NeurIPS 2023.
+
+\bibitem[Zhao et al.(2024)]{zhao2024expel}
+K.~Zhao et al. \newblock ExpeL: LLM Agents Are Experiential Learners.
+\newblock AAAI 2024.
+
+\bibitem[Li et al.(2025)]{li2025vbp}
+W.~Li et al. \newblock Verbalized Bayesian Persuasion.
+\newblock ICLR 2025 / arXiv:2502.01587.
+
+\end{thebibliography}
+
+\end{document}
