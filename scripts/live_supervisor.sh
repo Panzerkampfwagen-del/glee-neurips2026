@@ -11,8 +11,8 @@ while true; do
     >> "$LOG" 2>&1
   echo "[$(date -Is)] agent exited code=$?" >> "$LOG"
   if tail -5 "$LOG" | grep -q "timed out"; then
-    echo "[$(date -Is)] cooldown detected, sleeping 180s" >> "$LOG"
-    sleep 600
+    echo "[$(date -Is)] 403 cooldown detected, sleeping 300s" >> "$LOG"
+    sleep 300
   else
     sleep 20
   fi
