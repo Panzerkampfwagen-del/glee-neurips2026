@@ -137,6 +137,8 @@ def opponent_value_interval(game: dict) -> tuple[float | None, float | None]:
 
 
 def strategy(game: dict) -> dict:
+    import time as _t
+    _turn_start = _t.monotonic()  # server turn clock starts here
     fb = False
     try:
         family = game["game_family"]
@@ -205,13 +207,21 @@ def strategy(game: dict) -> dict:
         # pivotal offers only — routine moves stay deterministic and free.
         # Hard move-deadline: if anything above ate >25s, skip the LLM phase
         # entirely so latency never stacks into the 120s turn clock.
+        # Incident 2026-08-28 00:30: 3 games timed out server-side when slow
+        # Groq responses stretched sim-rank waves past the turn clock -> 403
+        # queue pause. Fixes: (a) an absolute TURN deadline (90s from turn
+        # start) is threaded into rank_offers/draft_message so the wave
+        # itself aborts; (b) rank_offers abandons rather than joins a wedged
+        # worker; (c) the whole LLM phase is skipped when <30s remain.
         try:
             import time as _t
+            _turn_deadline = _turn_start + 90.0
             _move_deadline = _t.monotonic() + 25.0
             atype = game["valid_actions"]["type"]
             pivotal = simulate.is_pivotal(game)
             llm_on = llm.enabled() and not ({"sim", "all"} & ABLATE) \
-                and _t.monotonic() < _move_deadline
+                and _t.monotonic() < _move_deadline \
+                and _t.monotonic() < _turn_deadline - 30.0
             if llm_on and atype == "offer" and \
                     family in ("bargaining", "negotiation"):
                 st = game["game_state"]
@@ -223,7 +233,8 @@ def strategy(game: dict) -> dict:
                               else "bob_gain")
                     gains = [float(c[my_key]) for c in cands]
                     best, mode = simulate.rank_offers(
-                        game, cands, "money splits (alice_gain, bob_gain)", gains)
+                        game, cands, "money splits (alice_gain, bob_gain)", gains,
+                        deadline=_turn_deadline)
                 else:
                     me = game.get("your_player", "player_2")
                     v = float(st.get(f"{me}_value") or 0)
@@ -242,15 +253,18 @@ def strategy(game: dict) -> dict:
                              else max(0.0, v - c["product_price"])
                              for c in cands]
                     best, mode = simulate.rank_offers(
-                        game, cands, "price offers", gains)
+                        game, cands, "price offers", gains,
+                        deadline=_turn_deadline)
                 if best:
                     raw = dict(best)
                     logger.info("[%s %s] sim-rank %s", family, game_id[:8], mode)
-            elif llm_on and _t.monotonic() < _move_deadline and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
+            elif llm_on and _t.monotonic() < min(_move_deadline, _turn_deadline - 15.0) \
+                    and pivotal and game["valid_actions"].get("fields", {}).get("message") is not None:
                 role = {"bargaining": "a negotiator splitting a pot under inflation",
                         "negotiation": "a buyer or seller trading one product",
                         "persuasion": "a seller recommending products of hidden quality"}[family]
-                drafted = simulate.draft_message(game, action, role)
+                drafted = simulate.draft_message(game, action, role,
+                                                 deadline=_turn_deadline)
                 if drafted:
                     action["message"] = drafted
         except Exception:

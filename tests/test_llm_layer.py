@@ -117,3 +117,30 @@ def test_agent_bargaining_gains_use_alice_bob_keys():
     import agent as agent_mod
     src = inspect.getsource(agent_mod)
     assert 'my_key = f"{game.get' not in src
+
+
+def test_rank_offers_respects_expired_turn_deadline(monkeypatch):
+    """Incident 2026-08-28: a sim-rank wave must never run past the caller's
+    turn deadline — expired deadline aborts immediately with mode 'deadline'."""
+    import time as _t
+    import src.simulate as sim
+    monkeypatch.setattr(sim.llm, "enabled", lambda: True)
+    monkeypatch.setattr(sim.llm, "available", lambda n=1: True)
+    game = {"game_state": {"last_offer": None, "history": []},
+            "game_family": "bargaining"}
+    cands = [{"alice_gain": 50.0, "bob_gain": 50.0}]
+    best, mode = sim.rank_offers(game, cands, "splits", [50.0],
+                                 deadline=_t.monotonic() - 1.0)
+    assert best is None and mode == "deadline"
+
+
+def test_draft_message_skips_when_deadline_near(monkeypatch):
+    import time as _t
+    import src.simulate as sim
+    monkeypatch.setattr(sim.llm, "available", lambda n=1: True)
+    called = {"n": 0}
+    monkeypatch.setattr(sim.llm, "chat",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    out = sim.draft_message({"game_family": "bargaining"}, {}, "role",
+                            deadline=_t.monotonic() - 1.0)
+    assert out is None and called["n"] == 0

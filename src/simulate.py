@@ -118,10 +118,22 @@ per candidate, same order>]}}"""
 
 
 def rank_offers(game: dict, candidates: list[dict], target_desc: str,
-                gains: list[float], timeout_per_call: float = 9.0) -> tuple[dict | None, str]:
-    """Returns (best_candidate_or_None, mode). mode explains what happened."""
+                gains: list[float], timeout_per_call: float = 9.0,
+                deadline: float | None = None) -> tuple[dict | None, str]:
+    """Returns (best_candidate_or_None, mode). mode explains what happened.
+
+    deadline: absolute time.monotonic() the caller must have its move
+    submitted by. The ranking wave never runs past it (incident 2026-08-28:
+    slow Groq responses blew the 120s server turn clock on 3 games -> 403
+    queue pause). We also never JOIN the worker thread on exit — a wedged
+    HTTP call is abandoned, not awaited."""
     if not candidates:
         return None, "no-candidates"
+    wave_deadline = time.monotonic() + 20.0
+    if deadline is not None:
+        wave_deadline = min(wave_deadline, deadline)
+    if time.monotonic() >= wave_deadline:
+        return None, "deadline"
     if not llm.enabled() or len(candidates) == 1 or \
             not llm.available(len(candidates)):
         return None, "budget"
@@ -141,18 +153,20 @@ def rank_offers(game: dict, candidates: list[dict], target_desc: str,
             "You are a concise game-theory assistant. Output only valid JSON."},
         {"role": "user", "content": prompt},
     ]
-    # Hard wall-clock ceiling for the whole ranking wave: never let LLM
-    # latency stack into the 120s turn clock (crash-loop protection).
-    deadline = time.monotonic() + 20.0
     probs = None
-    with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
+    pool = ThreadPoolExecutor(max_workers=min(4, len(candidates)))
+    try:
         future = pool.submit(llm.json_chat, messages, None,
                              min(timeout_per_call, 8.0), 1200)
-        remaining = max(1.0, deadline - time.monotonic())
+        remaining = max(1.0, wave_deadline - time.monotonic())
         try:
             probs = future.result(timeout=remaining)
         except Exception:
             probs = None
+    finally:
+        # abandon (don't await) any wedged worker — requests timeouts are
+        # per-socket-op, so a trickle response can outlive our deadline
+        pool.shutdown(wait=False, cancel_futures=True)
     if not probs or "p_accept" not in probs:
         return None, "llm-failed"
     try:
@@ -181,7 +195,10 @@ Stay perfectly consistent with the action and your prior claims. No quotes,
 no explanation — just the message text."""
 
 
-def draft_message(game: dict, action: dict, role_desc: str) -> str | None:
+def draft_message(game: dict, action: dict, role_desc: str,
+                  deadline: float | None = None) -> str | None:
+    if deadline is not None and time.monotonic() >= deadline - 8.0:
+        return None
     if not llm.available(1):
         return None
     context = summarize_history(game, limit=5)
