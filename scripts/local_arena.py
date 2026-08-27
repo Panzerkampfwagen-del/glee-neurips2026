@@ -14,6 +14,20 @@ import sys
 
 sys.path.insert(0, ".")
 
+# Stable pseudo-names for arena opponents so the profile rung (L2) has
+# something persistent to model across games (docs/09 T2 gap fix).
+OPP_NAME_PREFIX = "arena"
+_cur_opp_name = {"name": None}
+
+
+def set_opp_name(family, kind):
+    _cur_opp_name["name"] = f"{OPP_NAME_PREFIX}-{family}-{kind}"
+
+
+def get_opp_name():
+    return _cur_opp_name["name"]
+
+
 BARGAINING_OPP = {
     "fair": {"open": 0.5, "concede": 0.04, "min_accept": 0.42},
     "greedy": {"open": 0.78, "concede": 0.02, "min_accept": 0.30},
@@ -95,7 +109,7 @@ def _bgame(me, rnd, known, maxr, money, d1, d2, last, vtype, cur, hist=None):
     return {"game_id": f"L{os.environ.get('_ARM','x')}-{rnd}-{id(st)}",
             "game_family": "bargaining", "your_player": me,
             "valid_actions": {"type": vtype, "fields": {}},
-            "opponent": {"type": "hidden", "name": None}, "game_state": st,
+            "opponent": {"type": "hidden", "name": get_opp_name()}, "game_state": st,
             "prompt": ""}
 
 
@@ -176,13 +190,14 @@ def _npay(price, my_val, i_am_seller):
     return (price - my_val) if i_am_seller else (my_val - price)
 
 
-def _ngame(i_am_seller, val, rnd, last_price, vtype, last_from=None):
-    role = "player_1" if i_am_seller else "player_2"
+def _ngame(i_am_seller, val, rnd, last_price, vtype, last_from=None,
+           my_player=None, hist=None):
+    role = my_player or ("player_1" if i_am_seller else "player_2")
     st = {"round": rnd, "horizon_known": False,
           "player_1_role": "seller", "player_2_role": "buyer",
           f"{role}_value": val, "current_player": role,
           "messages_allowed": False, "complete_information": False,
-          "history": [],
+          "history": hist or [],
           "last_offer": ({"price": last_price, "message": "",
                           "from_player": last_from or (
                               "player_1" if i_am_seller else "player_2"),
@@ -193,7 +208,7 @@ def _ngame(i_am_seller, val, rnd, last_price, vtype, last_from=None):
     return {"game_id": f"N-{rnd}-{id(st)}", "game_family": "negotiation",
             "your_player": role, "valid_actions": {"type": vtype,
                                                    "fields": fields},
-            "opponent": {"type": "hidden", "name": None}, "game_state": st,
+            "opponent": {"type": "hidden", "name": get_opp_name()}, "game_state": st,
             "prompt": ""}
 
 
@@ -216,7 +231,7 @@ def play_persuasion(strategy, opp_kind, rng, gid="P"):
              "your_player": "player_1",
              "valid_actions": {"type": "seller_recommendation",
                                "fields": {"decision": "enum"}},
-             "opponent": {"type": "hidden", "name": None},
+             "opponent": {"type": "hidden", "name": get_opp_name()},
              "game_state": st, "prompt": ""}
         a = strategy(g)
         rec = a.get("decision", "yes") == "yes"
@@ -240,6 +255,15 @@ def run_arm(arm_label, n_per_cell=20, seed=20260825):
     os.environ["_ARM"] = arm_label
     os.environ["GLEE_ABLATE"] = {"L3": "", "L2": "profiles",
                                  "L1": "opp_model", "L0": "all"}[arm_label]
+    # profile-rung isolation: each arm starts from an empty profile file so
+    # one arm's learned profiles cannot contaminate another arm's numbers.
+    prof_path = os.path.join(os.environ.get("GLEE_ARENA_TMP", "/tmp"),
+                             f"glee_arena_profiles_{arm_label}.json")
+    try:
+        os.remove(prof_path)
+    except OSError:
+        pass
+    os.environ["GLEE_PROFILES_PATH"] = prof_path
     for m in list(sys.modules):
         if m.startswith("src") or m == "agent":
             del sys.modules[m]
@@ -255,12 +279,15 @@ def run_arm(arm_label, n_per_cell=20, seed=20260825):
         ("persuasion", play_persuasion, ["naive", "bayesian"]),
     ]:
         vals = []
+        pfx = {"bargaining": "barg", "negotiation": "neg",
+               "persuasion": "pers"}[fam]
         for oi, opp in enumerate(opps):
+            set_opp_name(pfx, opp)
             r2 = random.Random(seed * 100 + oi)
             for gi in range(n_per_cell // len(opps)):
                 try:
                     if fam == "persuasion":
-                        vals.append(runner(strat, opp, r2, gid=f"{arm}-{oi}-{gi}"))
+                        vals.append(runner(strat, opp, r2, gid=f"{os.environ.get("_ARM", "x")}-{oi}-{gi}"))
                     else:
                         vals.append(runner(strat, opp, r2))
                 except Exception as e:
@@ -273,6 +300,8 @@ if __name__ == "__main__":
     import logging
     logging.disable(logging.CRITICAL)
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 60
+    out_path = sys.argv[2] if len(sys.argv) > 2 \
+        else "experiments/t2_ladder_n120.json"
     seed = 20260825
     out = {}
     for arm in ["L0", "L1", "L2", "L3"]:
@@ -291,10 +320,10 @@ if __name__ == "__main__":
         print(arm, json.dumps(out[arm]), flush=True)
     from pathlib import Path
     Path("experiments").mkdir(exist_ok=True)
-    (Path("experiments") / "t2_ladder_pilot.json").write_text(
+    Path(out_path).write_text(
         json.dumps({"n_per_arm": n, "seed": seed,
                     "payoff_units": {"bargaining": "share of pot (discounted)",
                                      "negotiation": "surplus share",
                                      "persuasion": "$ at price=10, 20 rounds"},
                     "results": out}, indent=1))
-    print("saved experiments/t2_ladder_pilot.json")
+    print(f"saved {out_path}")

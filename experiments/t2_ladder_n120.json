@@ -1,0 +1,103 @@
+{
+ "n_per_arm": 120,
+ "seed": 20260825,
+ "payoff_units": {
+  "bargaining": "share of pot (discounted)",
+  "negotiation": "surplus share",
+  "persuasion": "$ at price=10, 20 rounds"
+ },
+ "results": {
+  "L0": {
+   "bargaining": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.243,
+    "median": 0.207,
+    "deal_rate": 0.592
+   },
+   "negotiation": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.39,
+    "median": 0.369,
+    "deal_rate": 1.0
+   },
+   "persuasion": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 111.75,
+    "median": 115.0,
+    "deal_rate": 1.0
+   }
+  },
+  "L1": {
+   "bargaining": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.243,
+    "median": 0.207,
+    "deal_rate": 0.592
+   },
+   "negotiation": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.39,
+    "median": 0.369,
+    "deal_rate": 1.0
+   },
+   "persuasion": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 113.0,
+    "median": 120.0,
+    "deal_rate": 1.0
+   }
+  },
+  "L2": {
+   "bargaining": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.211,
+    "median": 0.201,
+    "deal_rate": 0.592
+   },
+   "negotiation": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.39,
+    "median": 0.369,
+    "deal_rate": 1.0
+   },
+   "persuasion": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 109.75,
+    "median": 110.0,
+    "deal_rate": 1.0
+   }
+  },
+  "L3": {
+   "bargaining": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.209,
+    "median": 0.195,
+    "deal_rate": 0.592
+   },
+   "negotiation": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 0.39,
+    "median": 0.369,
+    "deal_rate": 1.0
+   },
+   "persuasion": {
+    "n": 120,
+    "exceptions": 0,
+    "mean": 110.417,
+    "median": 110.0,
+    "deal_rate": 1.0
+   }
+  }
+ }
+}
