@@ -1,0 +1,108 @@
+% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper (SUBMISSION VERSION)
+% NeurIPS 2026 format, IAB Workshop competition-paper track (single-blind).
+% Page budget: 4 content pages, unlimited references.
+% COMPILE: pdflatex 12_submission_neurips.tex  (requires neurips_2026.sty and
+% checklist.tex from https://neurips.cc in this directory)
+\documentclass{article}
+
+% Single-blind workshop track (review is by the organizing committee).
+\usepackage{sglblindworkshop}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+
+\title{Cheap Talk Is Not Evidence: A Solver-in-the-Loop Architecture for Language-Based Economic Games}
+\workshoptitle{IAB --- Interpreting Agent Behavior, NeurIPS 2026 Workshop}
+
+\author{Aryan [SURNAME] \\ % TODO: full author name + affiliation before submission
+  Independent \\\n  \texttt{[email]} \\\n  Competition agent public id: \texttt{7b2446de-071d-4b13-914d-b404f5ce2129}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+LLM agents competing in multi-turn economic games fail not at language but at two quieter tasks: computing numbers and updating beliefs. We present the design and field results of \texttt{agent01}, an autonomous agent that sustained top-quartile ratings across two GLEE game families (bargaining, negotiation) with rapid gains in the third (persuasion), built on a principle we call \emph{solver-in-the-loop}: every numeric decision is made by deterministic, unit-tested game-theoretic code, while the LLM is confined to drafting strategic language and ranking candidate actions whose payoffs were computed in code. Our central scientific finding emerged from a live failure: the agent's buyer module stopped trading in an expected-positive market because its deception penalty treated an \emph{uninformative} signal---a seller who always says ``yes''---as evidence about exogenous quality. We formalize the distinction between cheap-talk honesty and cheap-talk informativeness, show that prior-style deception penalties are inapplicable when signals are constant, and validate the correction in a paired experiment ($+794$ points per game, 95\% CI $\pm 87$). We contribute a six-item failure taxonomy from live play, each item converted into a permanent regression contract, and a measured Agent Behavior Analysis: over 14{,}808 production decisions, 100\% took the designed strategy path and 0\% degraded to fallback. A live ablation further shows that a layer ranking \emph{worse} than its alternative in a scripted arena ranks \emph{better} in the field---a caution against trusting local opponents for design decisions.
+\end{abstract}
+
+\section{Introduction}
+The GLEE competition evaluates autonomous agents in three two-player, language-based economic games: \textbf{bargaining} (alternating-offer division of a shrinking pie), \textbf{negotiation} (bilateral trade with private valuations), and \textbf{persuasion} (repeated sale of products of hidden quality). Agents act under real constraints---120\,s per move, 60 requests/min, a shared matchmaking pool---and are scored by payoff percentile against the field on the same configuration and role, adjusted for opponent strength; abandoned games score at the 5th percentile, so reliability is itself strategy.
+
+LLM agents fail these games at numbers and beliefs, not at language: they reject profitable splits out of miscalibrated fairness, miscompute discounted values, and update beliefs in ways that violate the game's causal structure. These are architecture failures, not prompting failures. We therefore split responsibilities: \emph{solvers compute; models communicate}.
+
+\section{Agent architecture: solver-in-the-loop}
+A thin dispatcher routes each incoming game to one of three deterministic solvers; a shared LLM shell (disabled under load, with a hard turn-clock guard) may rank candidates or draft text but never author a numeric decision.
+
+\paragraph{Bargaining.} Accept iff the offer clears a discount-adjusted continuation threshold; offers follow a Rubinstein-style curve adjusted by an opponent-patience tracker that ingests only the opponent's rejections of our offers. On unlimited-horizon deadlocks the accept floor decays so a thin deal always beats a no-deal.
+
+\paragraph{Negotiation.} Maintain direction-correct interval estimates of the opponent's private value from their offers and accept/reject behavior (their bid raises the lower bound; their rejection of our ask lowers the upper bound), price inside the estimated ZOPA, anchor aggressively at open, and walk away only on a near-certain negative-surplus posterior. Accept floors decay as rounds run out.
+
+\paragraph{Persuasion.} The seller follows a concavification-derived signaling policy with a horizon-adjusted exploitation window. The buyer's key component is a \emph{signal-regime classifier}: a seller whose messages never vary is classified as an uninformative channel, and the buyer's posterior stays at the base rate rather than treating constancy as evidence of dishonesty.
+
+\paragraph{LLM shell.} On pivotal turns only (opening offers, $\le 2$ rounds remaining, deadlock drift, confident exploitability), the solver emits ${\sim}5$ candidates; an LLM estimates acceptance probabilities and selects $\arg\max_i P_i g_i$; pivotal messages are drafted subject to consistency with the chosen action. Every action passes schema, enum, and arithmetic validation; any failure returns the deterministic action unchanged. A turn-clock guard (90\,s against the 120\,s budget) ensures a slow LLM call can only be discarded, never delay a submission.
+
+\section{Field results}
+Across the competition window the agent played ${\sim}8{,}400$ games per family. Bargaining rose from a 904 starting calibration to a peak displayed rating of 2{,}166 and held a top-quartile position; negotiation sustained ${\sim}1{,}900$; persuasion, whose signaling policy deliberately sacrifices rating for sparse informative signaling, recovered from a mid-competition trough to ${\sim}1{,}480$. Outcome distribution over 9{,}817 finished games: bargaining 97.8\% agreements; negotiation 45.7\% agreements, 42.5\% no-deals, 11.9\% walk-aways; persuasion 100\% completed.
+
+\section{Agent Behavior Analysis}
+\label{sec:behavior}
+This section reports how the agent actually behaved across all games it played, whether that behavior matches design intent, and how the match was established. All figures come from complete competition logs: 14{,}808 decision events in a replay ledger (3{,}510 bargaining, 3{,}138 negotiation, 8{,}160 persuasion) and 9{,}817 finished games.
+
+\paragraph{Decision provenance.} Every submitted action carries an origin tag. Over the full competition, 100\% of moves took the designed strategy path and 0\% degraded to the safe-action fallback. The LLM shell fired 3{,}950 ranking waves, exclusively on pivotal turns; the LLM never authored a numeric decision, and the ledger lets us verify this per move rather than assert it.
+
+\paragraph{Observed behavior by family.} \emph{Bargaining}: the move mix is proposer-heavy by design---1{,}805 own offers vs 1{,}603 rejections and only 102 acceptances---matching the intent of monetizing opponent impatience while accepting only threshold-clearing splits. \emph{Negotiation}: 2{,}828 rejections, 195 counter-offers, 82 acceptances, 33 walk-aways---prices stay inside the estimated ZOPA, acceptance is reserved for individually-rational offers that also clear the capture threshold, and walk-away fires only on a negative-surplus posterior; the no-deal rate is a designed consequence of never trading at a loss, not a malfunction. \emph{Persuasion}: the seller recommended in 40.5\% of rounds, the sparse-signaling profile predicted by the concavification policy.
+
+\paragraph{How alignment was ensured.} (i)~\emph{By construction}: all economic decisions are emitted by deterministic, unit-tested code; the LLM only ranks pre-built candidates or drafts text; every action passes schema, enum, and arithmetic validation. (ii)~\emph{By regression}: a 67-test suite encodes each documented live divergence (F1--F6, below) as a permanent test, making recurrence structurally impossible. (iii)~\emph{By audit}: per-move provenance makes 0\% fallback and pivotal-only LLM gating measured properties of the deployed system, not claims about code. (iv)~\emph{By live experiment}: layer value itself was measured (\S5), so the shipped configuration follows field evidence.
+
+\paragraph{Known divergences.} Two deviations from naive expectations are intentional: thin-deal acceptance on deadlocked unlimited-horizon games, and rejections of above-valuation take-it-or-leave-it offers (forced-correct under percentile scoring). The single substantive divergence is the F6 case: behavior matched the written policy while violating design intent, because the theory conflated constant cheap talk with dishonesty. A seller who always says ``yes'' carries no information; Crawford--Sobel-style analysis shows the buyer's posterior must remain at the base rate. The fix---classifying the signal regime before applying deception penalties---recovered $+794$ points per game (95\% CI $\pm 87$) on affected configurations in a paired experiment, with honest and lying sellers producing identical payoff distributions by construction. The failure class that motivated our measurement-first approach to alignment.
+
+\section{Ablations: the arena--field flip}
+A scripted-arena ablation ladder (n$=120$/arm, paired seeds) showed the opponent-patience tracker \emph{costing} 3.4pp of pot share against deterministic opponents. A live paired A/B then tested the same layer in production: with roles balanced (18/22 vs 18/16), tracker-ON sessions captured 0.529 mean pot share vs 0.392 for tracker-OFF (n=40/32, all agreements). The arena inversion does not transfer to the field: the tracker pays off against adaptive opponents and only overfits against fixed scripted ones. We ship tracker-ON and flag this flip as an external-validity caution for ablation methodology in agent design.
+
+\section{Conclusion}
+A solver-in-the-loop architecture turns LLM economic agents from prompt-driven generators into auditable decision systems: solvers compute, models communicate, and every deviation between designed and observed behavior is either structurally prevented or measured and documented. The transferable lesson is that the failure modes worth studying are not linguistic.
+
+\begin{thebibliography}{9}\small
+
+\bibitem{shapira2024glee}
+E.~Shapira, O.~Madmon, M.~Tennenholtz, R.~Reichart.
+\newblock GLEE: A Benchmark for Strategic AI in Natural Language.
+\newblock arXiv:2410.05254, 2024.
+
+\bibitem{crawford1982strategic}
+V.~Crawford, J.~Sobel.
+\newblock Strategic Information Transmission.
+\newblock Econometrica 50(6), 1982.
+
+\bibitem{rubinstein1982perfect}
+A.~Rubinstein.
+\newblock Perfect Equilibrium in a Bargaining Model.
+\newblock Econometrica 50(1), 1982.
+
+\bibitem{yao2023tree}
+S.~Yao et al.
+\newblock Tree of Thoughts: Deliberate Problem Solving with Large Language Models.
+\newblock NeurIPS 2023.
+
+\bibitem{shinn2023reflexion}
+N.~Shinn et al.
+\newblock Reflexion: Language Agents with Verbal Reinforcement Learning.
+\newblock NeurIPS 2023.
+
+\bibitem{zhao2024expel}
+Z.~Zhao et al.
+\newblock ExpeL: LLM Agents Are Experiential Learners.
+\newblock AAAI 2024.
+
+\end{thebibliography}
+
+\input{checklist.tex}
+
+\end{document}
