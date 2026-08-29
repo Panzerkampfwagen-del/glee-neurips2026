@@ -160,11 +160,23 @@ Three honest readings. (i) **Negotiation arms are indistinguishable because the 
 
 ⟨NEEDS EXPERIMENT: full ladder with named opponents, n≥120, before camera-ready.⟩
 
-## 7. Error Analysis
+## 7. Agent Behavior Analysis
+
+This section reports how the agent *actually* behaved across all games it played in production, whether that behavior matches the design intent of §4, and the mechanisms that establish the match. All figures are computed from complete competition logs: 14,808 decision events in the replay ledger (3,510 bargaining, 3,138 negotiation, 8,160 persuasion) and 9,817 finished games (2,201 / 3,766 / 3,850).
+
+**Decision provenance.** Every submitted action carries an origin tag in the replay ledger. Over the full competition: 100% of moves took the strategy path (deterministic solver output, optionally candidate-ranked), and 0% degraded to the safe-action fallback. The LLM shell fired 3,950 simulation-ranking waves, exclusively on pivotal offers (opening offers, ≤2 rounds remaining, deadlock drift, or a confident exploitability signal); every wave selected among candidates whose payoffs were computed in code, and a hard turn-clock guard (90s vs the 120s server budget) guaranteed that a slow LLM call could only ever be discarded, never delay a submission. The LLM therefore never authored a numeric decision, and the ledger lets us verify this per move rather than assert it.
+
+**Observed behavior by family.** *Bargaining* (2,201 finished games): 97.8% ended in agreement. The move mix is proposer-heavy by design — 1,805 own offers vs 1,603 rejections of opponent offers and only 102 acceptances — matching the intent of monetizing opponent impatience while accepting only threshold-clearing splits. *Negotiation* (3,766 games): 45.7% agreement, 42.5% no-deal, 11.9% walk-away. The move mix (2,828 rejections, 195 counter-offers, 82 acceptances, 33 walk-aways) matches the ZOPA-interval design: prices stay inside the estimated surplus interval, acceptance is reserved for individually-rational offers that also clear the capture threshold, and walk-away fires only on a near-certain negative-surplus posterior. The no-deal rate is a designed consequence of never trading at a loss under incomplete information, not a malfunction. *Persuasion* (3,850 games, all completed): the seller recommended in 2,495 of 6,161 rounds (40.5%), the sparse-signaling profile predicted by the concavification policy; the buyer accepted on posterior-positive EV only after the F6 correction (§5.3).
+
+**Design-to-behavior alignment mechanisms.** Alignment is established by construction and then audited, in four layers. (i) All economic decisions are emitted by deterministic, unit-tested code; the LLM can only rank pre-built candidates or draft text, and every action passes schema, enum, and arithmetic validation before submission. (ii) The regression suite (67 tests) encodes every documented live divergence F1–F6 as a permanent test, so each observed deviation from design intent becomes structurally impossible after its fix. (iii) The replay ledger supports per-move provenance audits: the 0% fallback rate and the pivotal-only gating of the LLM shell are measured properties of the deployed system, not claims about the code. (iv) Layer value itself was measured, not assumed: the live A/B of the opponent-patience tracker (§6) reversed the local-arena ranking, so the shipped configuration follows field evidence rather than the scripted approximation.
+
+**Known divergences.** Two behavioral deviations from naive expectations are intentional and documented: thin-deal acceptance on deadlocked unlimited-horizon games (a thin deal strictly dominates a no-deal under percentile scoring), and take-it-or-leave-it rejections of offers above our valuation (forced-correct under the scoring rule). The single substantive divergence history is F6 (§5.3): behavior matched the written policy while violating design intent, because the theory conflated constant cheap talk with dishonesty — the failure class that motivated measurement-first alignment.
+
+## 8. Error Analysis
 
 Provenance accounting over 3,273 consecutive production moves: 100% strategy-path, 0% safe-action fallbacks, 0 latency-attributed timeouts after the move-deadline guard. The residual error budget concentrates in three known classes: (i) thin-deal acceptance on deadlocked unlimited-horizon games (deliberate: thin deal ≫ no-deal under percentile scoring); (ii) TIOLI rejections above valuation (forced-correct); (iii) simulator probability degeneracy — early Groq responses echoed monotone sequences due to reasoning-token starvation, since mitigated by token-budget raises and structured prompts; the sim-ranking arm is therefore flagged ⟨needs longer accumulation⟩ and excluded from headline claims.
 
-## 8. Discussion
+## 9. Discussion
 
 **What transfers.** The solver/model split is domain-general: wherever an environment has computable structure (constraints, dynamics, mechanism), LLM wrappers should delegate computation to tested code and reserve the model for perception and expression. Our worst failures occurred exactly where that boundary leaked — arithmetic in prompts (pre-history), beliefs in reflections (F2/F6), validation in string ops (F1).
 
@@ -172,11 +184,11 @@ Provenance accounting over 3,273 consecutive production moves: 100% strategy-pat
 
 **Cheap-talk discipline.** The honesty/informativeness distinction should be a default check for any repeated-interaction agent: before updating on a counterpart's communication, ask what the communication *could vary with*. If the answer is nothing, the update is noise-mining.
 
-## 9. Limitations
+## 10. Limitations
 
 Constants (`FIELD_MIN_CONCESSION`, opener multipliers, capture thresholds, probe cadence) were tuned on this window's field and may be population-specific; they are isolated as four named parameters with ablation flags. The empirical opener tables reflect ~150 visible-value games; buckets are thin. Opponent profiles assume name stability. The persuasion ceiling is structural: EV-negative configurations force payoff-zero play, capping family percentiles independent of skill. We evaluate a single deployed system on a single account; cross-account variance is unmeasured. Simulator probabilities showed degeneracy under token starvation; despite mitigations, sim-ranking claims are limited to the pivotal subset and short horizons.
 
-## 10. Reproducibility
+## 11. Reproducibility
 
 The agent is a pure-Python package (deterministic solvers; LLM optional): pip-installable SDK pin, 65-test suite including every field regression, offline harness with scripted opponents, JSONL replay format specification, and seeded paired-experiment scripts. All experiments here are re-runnable without API keys except live-rating figures, which are time-stamped platform records.
 
