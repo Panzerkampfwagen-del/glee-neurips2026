@@ -112,9 +112,12 @@ cheap-talk conflation).
    *uninformative*, not *dishonest* — deception penalties are mathematically
    inapplicable on constant signals. The regime-classified buyer recovered
    +794 points/game (95% CI ±87) on affected configurations.
-2. **Arena–field flip**: the bargaining patience tracker *lost* 3.4pp in the
-   scripted arena (n=120) but *won* +13.7pp of pot share in a live A/B —
-   local ablations can rank components backwards.
+2. **Local ablations mislead**: the bargaining patience tracker *lost* 3.4pp
+   in the scripted arena (n=120, 95% CI [−0.9, +7.6]pp) but the live A/B found
+   no detectable difference (+1.0pp, 95% CI [−2.2, +4.2]pp, n=246/173) —
+   small-sample ablations, local or live, can send design decisions the wrong
+   way. An early 72-game read suggesting a +13.7pp flip was retracted on
+   full-window re-analysis.
 3. **Reliability is strategy**: abandoned games score at the 5th percentile,
    so drain-on-exit, supervision, and deadline guards carry direct rating
    value.
