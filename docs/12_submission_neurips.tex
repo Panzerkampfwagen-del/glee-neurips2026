@@ -1,6 +1,7 @@
-% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper (SUBMISSION VERSION)
+% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper (SUBMISSION VERSION, rev 2)
 % NeurIPS 2026 format, IAB Workshop competition-paper track (single-blind).
-% Page budget: 4 content pages, unlimited references.
+% Budget: 4 content pages + unlimited references. If over, trim in order:
+% (1) F6 paragraph detail, (2) ablation prose, (3) architecture paragraphs.
 % COMPILE: pdflatex 12_submission_neurips.tex  (requires neurips_2026.sty and
 % checklist.tex from https://neurips.cc in this directory)
 \documentclass{article}
@@ -33,23 +34,27 @@ LLM agents competing in multi-turn economic games fail not at language but at tw
 \end{abstract}
 
 \section{Introduction}
-The GLEE competition evaluates autonomous agents in three two-player, language-based economic games: \textbf{bargaining} (alternating-offer division of a shrinking pie), \textbf{negotiation} (bilateral trade with private valuations), and \textbf{persuasion} (repeated sale of products of hidden quality). Agents act under real constraints---120\,s per move, 60 requests/min, a shared matchmaking pool---and are scored by payoff percentile against the field on the same configuration and role, adjusted for opponent strength; abandoned games score at the 5th percentile, so reliability is itself strategy.
+The GLEE competition evaluates autonomous agents in three two-player, language-based economic games: \textbf{bargaining} (alternating-offer division of a shrinking pie), \textbf{negotiation} (bilateral trade with private valuations), and \textbf{persuasion} (repeated sale of products of hidden quality). Agents act under real constraints---120\,s per move, 60 requests/min, a shared matchmaking pool of humans, agents, and organizer-run LLM baselines---and are scored by payoff percentile against the field on the same configuration and role, adjusted for opponent strength; abandoned games score at the 5th percentile, so reliability is itself strategy.
 
-LLM agents fail these games at numbers and beliefs, not at language: they reject profitable splits out of miscalibrated fairness, miscompute discounted values, and update beliefs in ways that violate the game's causal structure. These are architecture failures, not prompting failures. We therefore split responsibilities: \emph{solvers compute; models communicate}.
+LLM agents fail these games at numbers and beliefs, not at language: they reject profitable splits out of miscalibrated fairness, miscompute discounted values, and update beliefs in ways that violate the game's causal structure. These are architecture failures, not prompting failures. We therefore split responsibilities: \emph{solvers compute; models communicate}. Our design was also shaped by an operational constraint unusual for agent papers: the agent had to survive ~30{,}000 rated games unattended for a month, so reliability mechanisms (drain-on-exit, self-healing supervision, watchdog snapshots) are treated as part of the agent, not infrastructure.
 
-\section{Agent architecture: solver-in-the-loop}
-A thin dispatcher routes each incoming game to one of three deterministic solvers; a shared LLM shell (disabled under load, with a hard turn-clock guard) may rank candidates or draft text but never author a numeric decision.
+\section{Technical approach}
+A thin dispatcher routes each game to one of three deterministic solvers; a shared LLM shell may rank candidates or draft text but never author a numeric decision.
 
 \paragraph{Bargaining.} Accept iff the offer clears a discount-adjusted continuation threshold; offers follow a Rubinstein-style curve adjusted by an opponent-patience tracker that ingests only the opponent's rejections of our offers. On unlimited-horizon deadlocks the accept floor decays so a thin deal always beats a no-deal.
 
-\paragraph{Negotiation.} Maintain direction-correct interval estimates of the opponent's private value from their offers and accept/reject behavior (their bid raises the lower bound; their rejection of our ask lowers the upper bound), price inside the estimated ZOPA, anchor aggressively at open, and walk away only on a near-certain negative-surplus posterior. Accept floors decay as rounds run out.
+\paragraph{Negotiation.} Maintain direction-correct interval estimates of the opponent's private value from their offers and accept/reject behavior (their bid raises the lower bound; their rejection of our ask lowers the upper bound), price inside the estimated ZOPA, anchor aggressively at open, and walk away only on a near-certain negative-surplus posterior. Openers use empirically calibrated payoff-per-value pricing learned from field data; accept floors decay as rounds run out.
 
 \paragraph{Persuasion.} The seller follows a concavification-derived signaling policy with a horizon-adjusted exploitation window. The buyer's key component is a \emph{signal-regime classifier}: a seller whose messages never vary is classified as an uninformative channel, and the buyer's posterior stays at the base rate rather than treating constancy as evidence of dishonesty.
 
-\paragraph{LLM shell.} On pivotal turns only (opening offers, $\le 2$ rounds remaining, deadlock drift, confident exploitability), the solver emits ${\sim}5$ candidates; an LLM estimates acceptance probabilities and selects $\arg\max_i P_i g_i$; pivotal messages are drafted subject to consistency with the chosen action. Every action passes schema, enum, and arithmetic validation; any failure returns the deterministic action unchanged. A turn-clock guard (90\,s against the 120\,s budget) ensures a slow LLM call can only be discarded, never delay a submission.
+\paragraph{Opponent modeling and memory.} Per-game state (patience trackers, interval estimates) is complemented by persistent cross-game profiles keyed by opponent name in identity-disclosed games: implied impatience for bargaining, rejection-rate aggression scaling for negotiation, and inferred buyer kind (myopic vs.\ bayesian) for persuasion, blended with in-game estimates as evidence accumulates.
+
+\paragraph{LLM shell.} Groq-hosted open-weights models (a 120B ``strong'' and 20B ``fast'' model), called with structured JSON-output prompts and a shared token-bucket rate limiter (two keys, per-call timeouts). On pivotal turns only (opening offers, $\le 2$ rounds remaining, deadlock drift, confident exploitability), the solver emits ${\sim}5$ candidates; the model estimates acceptance probabilities and selects $\arg\max_i P_i g_i$; pivotal messages are drafted subject to consistency with the chosen action and length caps. Every action passes schema, enum, and arithmetic validation; any failure returns the deterministic action unchanged. A turn-clock guard (90\,s against the 120\,s budget) ensures a slow model call can only be discarded, never delay a submission.
+
+\paragraph{Development process.} The agent began as a purely prompt-driven baseline and lost consistently; version~2 moved all arithmetic into solvers and the rating climbed monotonically thereafter. Six live failures (F1--F6) shaped the system: silent parser fallbacks that inverted accept/reject behavior (F1), belief updates that ignored claim classes (F2), non-directional value intervals (F3), rating-damage persistence after fixes (F4), session management crash-loops (F5), and the cheap-talk conflation analyzed in \S4 (F6). Each fix ships with a regression test; the failure taxonomy itself is a deliverable.
 
 \section{Field results}
-Across the competition window the agent played ${\sim}8{,}400$ games per family. Bargaining rose from a 904 starting calibration to a peak displayed rating of 2{,}166 and held a top-quartile position; negotiation sustained ${\sim}1{,}900$; persuasion, whose signaling policy deliberately sacrifices rating for sparse informative signaling, recovered from a mid-competition trough to ${\sim}1{,}480$. Outcome distribution over 9{,}817 finished games: bargaining 97.8\% agreements; negotiation 45.7\% agreements, 42.5\% no-deals, 11.9\% walk-aways; persuasion 100\% completed.
+Across the competition window the agent played ${\sim}9{,}800$ games per family (\texttt{agent01}, public id in the author block). Bargaining rose from a 904 starting calibration to a peak displayed rating of 2{,}166 and finished above 2{,}000; negotiation sustained ${\sim}1{,}900$; persuasion, whose signaling policy deliberately trades rating for sparse informative signaling, ended at ${\sim}1{,}300$. Outcome distribution over 9{,}817 finished games: bargaining 97.8\% agreements; negotiation 45.7\% agreements, 42.5\% no-deals, 11.9\% walk-aways; persuasion 100\% completed with a 35.1\% lemon-buy rate against a 50\% base rate.
 
 \section{Agent Behavior Analysis}
 \label{sec:behavior}
@@ -57,14 +62,19 @@ This section reports how the agent actually behaved across all games it played, 
 
 \paragraph{Decision provenance.} Every submitted action carries an origin tag. Over the full competition, 100\% of moves took the designed strategy path and 0\% degraded to the safe-action fallback. The LLM shell fired 3{,}950 ranking waves, exclusively on pivotal turns; the LLM never authored a numeric decision, and the ledger lets us verify this per move rather than assert it.
 
-\paragraph{Observed behavior by family.} \emph{Bargaining}: the move mix is proposer-heavy by design---1{,}805 own offers vs 1{,}603 rejections and only 102 acceptances---matching the intent of monetizing opponent impatience while accepting only threshold-clearing splits. \emph{Negotiation}: 2{,}828 rejections, 195 counter-offers, 82 acceptances, 33 walk-aways---prices stay inside the estimated ZOPA, acceptance is reserved for individually-rational offers that also clear the capture threshold, and walk-away fires only on a negative-surplus posterior; the no-deal rate is a designed consequence of never trading at a loss, not a malfunction. \emph{Persuasion}: the seller recommended in 40.5\% of rounds, the sparse-signaling profile predicted by the concavification policy.
+\paragraph{Observed behavior by family.} \emph{Bargaining}: the move mix is proposer-heavy by design---1{,}805 own offers vs 1{,}603 rejections and only 102 acceptances---matching the intent of monetizing opponent impatience while accepting only threshold-clearing splits. \emph{Negotiation}: 2{,}828 rejections, 195 counter-offers, 82 acceptances, 33 walk-aways---prices stay inside the estimated ZOPA, acceptance is reserved for individually-rational offers that also clear the capture threshold, and walk-away fires only on a negative-surplus posterior; the no-deal rate is a designed consequence of never trading at a loss, not a malfunction. \emph{Persuasion}: the seller recommended in 40.5\% of rounds, the sparse-signaling profile predicted by the concavification policy; the buyer abstained in most rounds and avoided lemons at a rate consistent with the base-rate posterior.
 
-\paragraph{How alignment was ensured.} (i)~\emph{By construction}: all economic decisions are emitted by deterministic, unit-tested code; the LLM only ranks pre-built candidates or drafts text; every action passes schema, enum, and arithmetic validation. (ii)~\emph{By regression}: a 67-test suite encodes each documented live divergence (F1--F6, below) as a permanent test, making recurrence structurally impossible. (iii)~\emph{By audit}: per-move provenance makes 0\% fallback and pivotal-only LLM gating measured properties of the deployed system, not claims about code. (iv)~\emph{By live experiment}: layer value itself was measured (\S5), so the shipped configuration follows field evidence.
+\paragraph{How alignment was ensured.} (i)~\emph{By construction}: all economic decisions are emitted by deterministic, unit-tested code; the LLM only ranks pre-built candidates or drafts text; every action passes schema, enum, and arithmetic validation. (ii)~\emph{By regression}: the 67-test suite encodes each documented live divergence (F1--F6) as a permanent test, making recurrence structurally impossible. (iii)~\emph{By audit}: per-move provenance makes 0\% fallback and pivotal-only LLM gating measured properties of the deployed system, not claims about code. (iv)~\emph{By live experiment}: layer value itself was measured (\S5), so the shipped configuration follows field evidence.
 
-\paragraph{Known divergences.} Two deviations from naive expectations are intentional: thin-deal acceptance on deadlocked unlimited-horizon games, and rejections of above-valuation take-it-or-leave-it offers (forced-correct under percentile scoring). The single substantive divergence is the F6 case: behavior matched the written policy while violating design intent, because the theory conflated constant cheap talk with dishonesty. A seller who always says ``yes'' carries no information; Crawford--Sobel-style analysis shows the buyer's posterior must remain at the base rate. The fix---classifying the signal regime before applying deception penalties---recovered $+794$ points per game (95\% CI $\pm 87$) on affected configurations in a paired experiment, with honest and lying sellers producing identical payoff distributions by construction. The failure class that motivated our measurement-first approach to alignment.
+\paragraph{Known divergences.} Two deviations from naive expectations are intentional: thin-deal acceptance on deadlocked unlimited-horizon games (a thin deal strictly dominates a no-deal under percentile scoring), and rejections of above-valuation take-it-or-leave-it offers (forced-correct under the scoring rule). The single substantive divergence is the F6 case: behavior matched the written policy while violating design intent, because the theory conflated constant cheap talk with dishonesty. A seller who always says ``yes'' carries no information; cheap-talk analysis shows the buyer's posterior must remain at the base rate. The fix---classifying the signal regime before applying deception penalties---recovered $+794$ points per game (95\% CI $\pm 87$) on affected configurations in a paired experiment, with honest and lying sellers producing identical payoff distributions by construction.
 
 \section{Ablations: the arena--field flip}
 A scripted-arena ablation ladder (n$=120$/arm, paired seeds) showed the opponent-patience tracker \emph{costing} 3.4pp of pot share against deterministic opponents. A live paired A/B then tested the same layer in production: with roles balanced (18/22 vs 18/16), tracker-ON sessions captured 0.529 mean pot share vs 0.392 for tracker-OFF (n=40/32, all agreements). The arena inversion does not transfer to the field: the tracker pays off against adaptive opponents and only overfits against fixed scripted ones. We ship tracker-ON and flag this flip as an external-validity caution for ablation methodology in agent design.
+
+\section{Limitations and reproducibility}
+\paragraph{Limitations.} (1) The opponent-patience tracker and profiles were validated only against the live field and a small scripted population; the arena--field flip (\S5) warns that our local evaluation can rank components backwards. (2) Sim-ranking quality degrades under token starvation (degenerate probability outputs); the arm is excluded from headline claims and fails safe. (3) Ratings are strength-adjusted percentiles against a time-varying field, so cross-agent comparisons are confounded by when games were played. (4) The live A/B compares arms by session alternation, not randomization within opponent pools. (5) The persuasion seller's policy optimizes long-horizon credibility over immediate percentile gain; its rating is structurally capped.
+
+\paragraph{Reproducibility.} The agent is pure Python against the public GLEE SDK; game-theoretic components are self-contained and unit-tested (67 tests), with no fine-tuning or private data. The full replay ledger (one JSON record per submitted move, with origin tags and timestamps) and hourly watchdog snapshots are retained and can be re-analyzed end-to-end. LLM calls go to a public inference API with open-weight models; disabling the LLM layer entirely (an environment flag) reproduces the deterministic core. Code and logs are available on request, and the agent's public id links all behavior reported here to the official leaderboard.
 
 \section{Conclusion}
 A solver-in-the-loop architecture turns LLM economic agents from prompt-driven generators into auditable decision systems: solvers compute, models communicate, and every deviation between designed and observed behavior is either structurally prevented or measured and documented. The transferable lesson is that the failure modes worth studying are not linguistic.
@@ -77,7 +87,7 @@ E.~Shapira, O.~Madmon, M.~Tennenholtz, R.~Reichart.
 \newblock arXiv:2410.05254, 2024.
 
 \bibitem{crawford1982strategic}
-V.~Crawford, J.~Sobel.
+V.~Crawford and J.~Sobel.
 \newblock Strategic Information Transmission.
 \newblock Econometrica 50(6), 1982.
 
@@ -85,6 +95,26 @@ V.~Crawford, J.~Sobel.
 A.~Rubinstein.
 \newblock Perfect Equilibrium in a Bargaining Model.
 \newblock Econometrica 50(1), 1982.
+
+\bibitem{osborne1990bargaining}
+M.~Osborne and A.~Rubinstein.
+\newblock Bargaining and Markets.
+\newblock Academic Press, 1990.
+
+\bibitem{farrell1996cheap}
+J.~Farrell and M.~Rabin.
+\newblock Cheap Talk.
+\newblock Journal of Economic Perspectives 10(3), 1996.
+
+\bibitem{camerer2003behavioral}
+C.~Camerer.
+\newblock Behavioral Game Theory.
+\newblock Princeton University Press, 2003.
+
+\bibitem{yao2023react}
+S.~Yao et al.
+\newblock ReAct: Synergizing Reasoning and Acting in Language Models.
+\newblock ICLR 2023.
 
 \bibitem{yao2023tree}
 S.~Yao et al.
@@ -100,6 +130,16 @@ N.~Shinn et al.
 Z.~Zhao et al.
 \newblock ExpeL: LLM Agents Are Experiential Learners.
 \newblock AAAI 2024.
+
+\bibitem{li2025vbp}
+W.~Li et al.
+\newblock Verbalized Bayesian Persuasion.
+\newblock ICLR 2025 / arXiv:2502.01587.
+
+\bibitem{snell2025scaling}
+C.~Snell et al.
+\newblock Scaling LLM Test-Time Compute Optimally Can Be More Effective than Scaling Model Parameters.
+\newblock ICLR 2025.
 
 \end{thebibliography}
 
