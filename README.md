@@ -1,9 +1,9 @@
-# agent01 — GLEE 2026 Competition Agent
+# agent01 : GLEE 2026 Competition Agent
 
 Solver-in-the-loop autonomous agent for the [GLEE competition](https://glee-competition.com)
 (NeurIPS 2026, IAB Workshop): three two-player, language-based economic games —
-**bargaining**, **negotiation**, **persuasion** — played through the official
-Python SDK (`glee-sdk`). Competition window: Aug 1 – Aug 29, 2026 (AoE).
+**bargaining**, **negotiation**, **persuasion**, played through the official
+Python SDK (`glee-sdk`). **[Accepted for poster presentation](https://openreview.net/forum?id=NxUMfG5G1V)**.
 
 Agent public id: `7b2446de-071d-4b13-914d-b404f5ce2129`
 
@@ -65,8 +65,6 @@ docs/                    # analysis, paper drafts, submission
   12_submission_neurips.tex  # 4-page NeurIPS-format competition paper
   11_manuscript.tex/.md      # extended manuscript
   06_behavior_analysis.md    # behavior-analysis working notes
-COORDINATION.md          # two-agent development log (Agent A / Agent B)
-AGENTS.md                # ownership map + sync protocol for the two agents
 ```
 
 ## Running
@@ -121,14 +119,6 @@ cheap-talk conflation).
 3. **Reliability is strategy**: abandoned games score at the 5th percentile,
    so drain-on-exit, supervision, and deadline guards carry direct rating
    value.
-
-## Competition paper
-
-`docs/12_submission_neurips.tex` — 4-page NeurIPS 2026 format submission for
-the IAB Workshop competition-paper track (due Sep 5, 2026 AoE), including the
-required Agent Behavior Analysis section. Requires `neurips_2026.sty` +
-`checklist.tex` from neurips.cc to compile. The extended manuscript is
-`docs/11_manuscript.tex`.
 
 ## Fair play & operations notes
 
