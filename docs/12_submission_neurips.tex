@@ -1,9 +1,9 @@
-% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper (SUBMISSION VERSION, rev 2)
+% Cheap Talk Is Not Evidence — GLEE 2026 Competition Paper (CAMERA-READY)
 % NeurIPS 2026 format, IAB Workshop competition-paper track (single-blind).
-% Budget: 4 content pages + unlimited references. If over, trim in order:
-% (1) F6 paragraph detail, (2) ablation prose, (3) architecture paragraphs.
-% COMPILE: pdflatex 12_submission_neurips.tex  (requires neurips_2026.sty and
-% checklist.tex from https://neurips.cc in this directory)
+% CAMERA-READY: 5 content pages + unlimited references and appendix.
+% Detailed derivations, full ablation tables, and reproduction details live in
+% the appendix. COMPILE: pdflatex 12_submission_neurips.tex (requires
+% neurips_2026.sty and checklist.tex from https://neurips.cc in this directory)
 \documentclass{article}
 
 % Single-blind workshop track (review is by the organizing committee).
@@ -23,14 +23,16 @@
 \workshoptitle{IAB --- Interpreting Agent Behavior, NeurIPS 2026 Workshop}
 
 \author{Aryan [SURNAME] \\ % TODO: full author name + affiliation before submission
-  Independent \\\n  \texttt{[email]} \\\n  Competition agent public id: \texttt{7b2446de-071d-4b13-914d-b404f5ce2129}}
+  Independent \\
+  \texttt{[email]} \\
+  Competition agent public id: \texttt{7b2446de-071d-4b13-914d-b404f5ce2129}}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-LLM agents competing in multi-turn economic games fail not at language but at two quieter tasks: computing numbers and updating beliefs. We present the design and field results of \texttt{agent01}, an autonomous agent that played ~30{,}000 rated games across the three GLEE families and finished with stable four-digit ratings in two of them (bargaining peak 2{,}166; negotiation ~1{,}900), while the third (persuasion) ran a deliberately conservative, credibility-first policy, built on a principle we call \emph{solver-in-the-loop}: every numeric decision is made by deterministic, unit-tested game-theoretic code, while the LLM is confined to drafting strategic language and ranking candidate actions whose payoffs were computed in code. Our central scientific finding emerged from a live failure: the agent's buyer module stopped trading in an expected-positive market because its deception penalty treated an \emph{uninformative} signal---a seller who always says ``yes''---as evidence about exogenous quality. We formalize the distinction between cheap-talk honesty and cheap-talk informativeness, show that prior-style deception penalties are inapplicable when signals are constant, and validate the correction in a paired experiment ($+794$ points per game, 95\% CI $\pm 87$). We contribute a six-item failure taxonomy from live play, each item converted into a permanent regression contract, and a measured Agent Behavior Analysis: over 14{,}808 production decisions, 100\% took the designed strategy path and 0\% degraded to fallback. A live ablation then shows that the scripted arena's harm estimate does not transfer to the field (no detectable difference there)---a caution against trusting small local opponents for design decisions.
+LLM agents competing in multi-turn economic games fail not at language but at two quieter tasks: computing numbers and updating beliefs. We present the design and field results of \texttt{agent01}, an autonomous agent that played ~30{,}000 rated games across the three GLEE families and finished with stable four-digit ratings in two of them (bargaining peak 2{,}166; negotiation ~1{,}900), while the third (persuasion) ran a deliberately conservative, credibility-first policy, built on a principle we call \emph{solver-in-the-loop}: every numeric decision is made by deterministic, unit-tested game-theoretic code, while the LLM is confined to drafting strategic language and ranking candidate actions whose payoffs were computed in code. Our central scientific finding emerged from a live failure: the agent's buyer module stopped trading in an expected-positive market because its deception penalty treated an \emph{uninformative} signal---a seller who always says ``yes''---as evidence about exogenous quality. We formalize the distinction between cheap-talk honesty and cheap-talk informativeness, show that prior-style deception penalties are inapplicable when signals are constant, and validate the correction in a paired experiment ($+794$ points per game, 95\% CI $\pm 87$). We contribute a six-item failure taxonomy from live play, each item converted into a permanent regression contract, and a measured Agent Behavior Analysis: over 14{,}808 production decisions, 100\% took the designed strategy path and 0\% degraded to fallback. In a controlled component ablation, a prompt-only LLM agent forfeits 87\% of games on invalid outputs while the solver-only core forfeits none, and adding LLM ranking to the full solver changes nothing measurable under the competition rate budget. A live ablation further shows that the scripted arena's harm estimate does not transfer to the field (no detectable difference there)---a caution against trusting small local opponents for design decisions.
 \end{abstract}
 
 \section{Introduction}
@@ -43,7 +45,7 @@ A thin dispatcher routes each game to one of three deterministic solvers; a shar
 
 \paragraph{Bargaining.} Accept iff the offer clears a discount-adjusted continuation threshold; offers follow a Rubinstein-style curve adjusted by an opponent-patience tracker that ingests only the opponent's rejections of our offers. On unlimited-horizon deadlocks the accept floor decays so a thin deal always beats a no-deal.
 
-\paragraph{Negotiation.} The solver maintains direction-correct interval estimates $[\hat{s}, \hat{b}]$ of the opponent's private value from three evidence types, each applied only to the opponent's own actions: (i)~an opponent bid $b$ raises our lower bound, $\hat{s} \leftarrow \max(\hat{s}, 0.85\,b)$ when we sell (symmetrically for the upper bound when we buy); (ii)~their rejection of our ask $a$ tightens the bound in the direction of $a$; (iii)~their acceptance of our ask fixes it. We price inside the resulting ZOPA with non-round anchors, accept an individually-rational offer once its surplus capture exceeds a threshold that decays as rounds run out (a thin deal strictly dominates a no-deal), counter with round-number-avoiding anchors, and walk away only on a near-certain negative-surplus posterior. Openers use empirically calibrated payoff-per-value pricing learned from field data.
+\paragraph{Negotiation.} The solver maintains direction-correct interval estimates $[\hat{s}, \hat{b}]$ of the opponent's private value, updated only from the opponent's own actions (their bids, and their accept/reject responses to our offers), prices inside the estimated ZOPA with non-round anchors, accepts only individually-rational offers that clear a capture threshold decaying with remaining rounds, and walks away only on a near-certain negative-surplus posterior. Openers use empirically calibrated payoff-per-value pricing learned from field data. Exact update rules, thresholds, and the full decision flow are given in Appendix~\ref{app:negotiation}.
 
 \paragraph{Persuasion.} The seller follows a concavification-derived signaling policy with a horizon-adjusted exploitation window. The buyer's key component is a \emph{signal-regime classifier}: a seller whose messages never vary is classified as an uninformative channel, and the buyer's posterior stays at the base rate rather than treating constancy as evidence of dishonesty.
 
@@ -51,7 +53,7 @@ A thin dispatcher routes each game to one of three deterministic solvers; a shar
 
 \paragraph{LLM shell.} Groq-hosted open-weights models (a 120B ``strong'' and 20B ``fast'' model), called with structured JSON-output prompts and a shared token-bucket rate limiter (two keys, per-call timeouts). On pivotal turns only (opening offers, $\le 2$ rounds remaining, deadlock drift, confident exploitability), the solver emits ${\sim}5$ candidates; the model estimates acceptance probabilities and selects $\arg\max_i P_i g_i$; pivotal messages are drafted subject to consistency with the chosen action and length caps. Every action passes schema, enum, and arithmetic validation; any failure returns the deterministic action unchanged. A turn-clock guard (90\,s against the 120\,s budget) ensures a slow model call can only be discarded, never delay a submission.
 
-\paragraph{Development process.} The agent began as a purely prompt-driven baseline and lost consistently; version~2 moved all arithmetic into solvers and the rating climbed monotonically thereafter. Six live failures (F1--F6) shaped the system: silent parser fallbacks that inverted accept/reject behavior (F1), belief updates that ignored claim classes (F2), non-directional value intervals (F3), rating-damage persistence after fixes (F4), session management crash-loops (F5), and the cheap-talk conflation analyzed in \S4 (F6). Each fix ships with a regression test; the failure taxonomy itself is a deliverable.
+\paragraph{Development process.} The agent began as a purely prompt-driven baseline and lost consistently; version~2 moved all arithmetic into solvers and the rating climbed monotonically thereafter. Six live failures (F1--F6) shaped the system: silent parser fallbacks that inverted accept/reject behavior (F1), belief updates that ignored claim classes (F2), non-directional value intervals (F3), rating-damage persistence after fixes (F4), session management crash-loops (F5), and the cheap-talk conflation analyzed in \S\ref{sec:behavior} (F6). Each fix ships with a regression test; the failure taxonomy itself is a deliverable.
 
 \section{Field results}
 Across the competition window the agent played ${\sim}9{,}800$ games per family (\texttt{agent01}, public id in the author block). Bargaining rose from a 904 starting calibration to a peak displayed rating of 2{,}166 and finished above 2{,}000; negotiation sustained ${\sim}1{,}900$; persuasion, whose signaling policy deliberately trades rating for sparse informative signaling, ended at ${\sim}1{,}300$. Outcome distribution over 9{,}817 finished games: bargaining 97.8\% agreements; negotiation 45.7\% agreements, 42.5\% no-deals, 11.9\% walk-aways; persuasion 100\% completed with a 35.1\% lemon-buy rate against a 50\% base rate.
@@ -66,11 +68,11 @@ This section reports how the agent actually behaved across all games it played, 
 
 \paragraph{How alignment was ensured.} (i)~\emph{By construction}: all economic decisions are emitted by deterministic, unit-tested code; the LLM only ranks pre-built candidates or drafts text; every action passes schema, enum, and arithmetic validation. (ii)~\emph{By regression}: the 67-test suite encodes each documented live divergence (F1--F6) as a permanent test, making recurrence structurally impossible. (iii)~\emph{By audit}: per-move provenance makes 0\% fallback and pivotal-only LLM gating measured properties of the deployed system, not claims about code. (iv)~\emph{By live experiment}: layer value was measured in the field (\S5); where the live experiment could not distinguish a component from its ablation, the theoretically-motivated default was retained and the uncertainty documented.
 
-\paragraph{Known divergences.} Two deviations from naive expectations are intentional: thin-deal acceptance on deadlocked unlimited-horizon games (a thin deal strictly dominates a no-deal under percentile scoring), and rejections of above-valuation take-it-or-leave-it offers (forced-correct under the scoring rule). The single substantive divergence is the F6 case: behavior matched the written policy while violating design intent, because the theory conflated constant cheap talk with dishonesty. A seller who always says ``yes'' carries no information; cheap-talk analysis shows the buyer's posterior must remain at the base rate. The fix---classifying the signal regime before applying deception penalties---recovered $+794.0$ buyer points per game (95\% CI $\pm 86.6$) on constant-signal configurations, with honest and lying sellers producing identical payoff distributions by construction. The experiment is a paired local simulation of the buyer side (the seller is scripted): $n=200$ paired seeds per arm per seller type, product quality drawn with $p=0.5$, value $v=300$, price $100$; the metric is the mean per-game buyer payoff difference (NEW minus OLD buyer) and the CI is $\pm 1.96$ standard errors of the 200 paired per-seed differences. On informative (selective) sellers the new buyer still improves $+106.0$ (95\% CI $\pm 55.3$), i.e.\ no significant downside anywhere. The underlying observation is classical cheap-talk theory (\S2 refs); our contribution is the deployment failure taxonomy around it and the measured cost of the incorrect rule.
+\paragraph{Known divergences.} Two deviations from naive expectations are intentional: thin-deal acceptance on deadlocked unlimited-horizon games (a thin deal strictly dominates a no-deal under percentile scoring), and rejections of above-valuation take-it-or-leave-it offers (forced-correct under the scoring rule). The single substantive divergence is the F6 case: the buyer's deception penalty treated a constant seller signal---which carries no information---as dishonesty; classifying the signal regime before applying penalties recovered $+794.0$ buyer points per game (95\% CI $\pm 86.6$) on constant-signal configurations with no significant downside on informative sellers ($+106.0$ $\pm 55.3$). The observation itself is classical cheap-talk theory (Crawford--Sobel 1982; Farrell--Rabin 1996); our contribution is the deployment failure taxonomy around it and the measured cost of the incorrect rule. Full experiment configuration and per-seller-type statistics are given in Appendix~\ref{app:cheapalk}.
 
 \section{Component-wise evaluation and ablations}
 
-\paragraph{Staged deployment timeline.} The system was built incrementally and each stage was measured in production. A prompt-driven baseline (gen-1) calibrated at displayed ratings 904/958/1048 (bargaining/negotiation/persuasion) over 37--39 games; deploying the deterministic solvers (gen-2) started a monotonic climb to 1954/1471/1223 within ~1{,}200 games per family --- post-deploy slopes of $+62.1$, $+18.9$, and $+5.3$ rating points per 100 games respectively. Later stages (audit fixes, F6 correction, turn-clock guard) are evaluated below and in the Agent Behavior Analysis section.
+\paragraph{Staged deployment timeline.} The system was built incrementally, and each stage was measured in production. A prompt-driven baseline (gen-1) calibrated at displayed ratings 904/958/1048 (bargaining/negotiation/persuasion); deploying the deterministic solvers (gen-2) started a monotonic climb to 1954/1471/1223 within ~1{,}200 games per family --- post-deploy slopes of $+62.1$, $+18.9$, and $+5.3$ rating points per 100 games respectively. Full staged snapshots are given in Appendix~\ref{app:components}.
 
 \begin{table}[t]\centering\small
 \caption{Controlled component ablation, bargaining arena, $n=120$/arm on paired seeds vs scripted opponents (mean discounted pot share $\pm$ SE). ``LLM-only'' is a prompt-only agent with no solver and no safety net; invalid outputs forfeit the game.}
@@ -87,39 +89,14 @@ Solver + tracker + LLM ranking & 0.210 & 0.020 & 0 \\
 \end{tabular}
 \end{table}
 
-\paragraph{Controlled component ablation.} Table~\ref{tab:components} compares, on identical opponent and seed streams: a prompt-only LLM agent, the solver-only core, the solver with the opponent tracker, and the full system with LLM ranking. The solver-only core beats the LLM-only baseline by $+0.177$ pot share (95\% CI $[+0.122, +0.231]$, Welch $t=6.5$); the LLM-only agent forfeited 104 of 120 games on invalid or empty outputs, which is the failure mode the validation layer exists to prevent. Adding LLM ranking to the full solver changed nothing measurable ($+0.001$, 95\% CI $[-0.056, +0.058]$): under the competition's 24 requests/min budget only 33 of 639 ranking waves executed (the token bucket skipped the rest, by design), so the LLM layer is architecturally safe and its marginal contribution was not measurable at this budget. The tracker comparison in this pairing is $+3.4$pp favoring OFF, 95\% CI $[-2.7, +9.4]$pp --- consistent with the pooled analysis below.
+\paragraph{Controlled component ablation.} Table~\ref{tab:components} compares, on identical opponent and seed streams: a prompt-only LLM agent, the solver-only core, the solver with the opponent tracker, and the full system with LLM ranking. The solver-only core beats the LLM-only baseline by $+0.177$ pot share (95\% CI $[+0.122, +0.231]$, Welch $t=6.5$); the LLM-only agent forfeited 104 of 120 games on invalid or empty outputs, which is the failure mode the validation layer exists to prevent. Adding LLM ranking to the full solver changed nothing measurable ($+0.001$, 95\% CI $[-0.056, +0.058]$): under the competition's 24 requests/min budget only 33 of 639 ranking waves executed (the token bucket skipped the rest, by design), so the LLM layer is architecturally safe and its marginal contribution was not measurable at this budget.
 
-\paragraph{Modification-to-effect summary.} Table~\ref{tab:mods} maps each major modification to its evaluation and measured effect.
-
-\begin{table}[t]\centering\small
-\caption{Major modifications, their evaluation instrument, and measured effect.}
-\label{tab:mods}
-\begin{tabular}{p{3.4cm}p{3.6cm}p{5.4cm}}
-\toprule
-Modification & Evaluation & Measured effect \\
-\midrule
-gen-1 $\to$ gen-2 (arithmetic into solvers) & field ratings, staged snapshots & $+62.1$ rating pts/100 games (bargaining); $+18.9$ (negotiation) \\
-Signal-regime buyer (F6 fix) & paired simulation, $n=200$ seeds/arm/type & $+794.0$ pts/game (95\% CI $\pm 86.6$) on constant-signal sellers; $+106.0$ $\pm 55.3$ on informative sellers \\
-LLM ranking shell & arena, 120 games/arm, paired & no measurable change under 24 req/min (33/639 waves executed); fails safe \\
-Opponent-patience tracker & arena + live A/B & arena $-3.4$pp (CI $[-0.9,+7.6]$); live $+1.0$pp (CI $[-2.2,+4.2]$) --- both non-significant \\
-Turn-clock guard & production incident follow-up & 0 latency-attributed timeouts after deployment \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Tracker ablations.} 
-We ablated the opponent-patience tracker in two settings; error bars throughout are standard errors of the mean over independent games (the factor of variability is per-game outcome randomness under fixed policies and paired seeds), and 95\% confidence intervals (CIs) use the $t\approx2$ normal approximation on Welch's two-sample $t$; no result below is significant at the 5\% level unless its CI excludes zero.
-
-\emph{Scripted arena} (opponents fixed, 120 games/arm, paired seeds, pooled 240 vs 240): tracker-OFF 0.243 $\pm$ 0.016 vs tracker-ON 0.209 $\pm$ 0.014 mean pot share; difference $+3.4$pp favoring OFF, 95\% CI $[-0.9, +7.6]$pp (Welch $t=1.59$, df$\approx473$) --- directionally harmful, not individually significant. (The Table~\ref{tab:components} pairing reports the same comparison from single-arm seeds: $[-2.7, +9.4]$pp; both are consistent.)
-
-\emph{Live field} (30-min session alternation over a 12-hour window; all agreement games in the window): tracker-ON 0.498 $\pm$ 0.010 (n=246) vs tracker-OFF 0.488 $\pm$ 0.013 (n=173); difference $+1.0$pp favoring ON, 95\% CI $[-2.2, +4.2]$pp (Welch $t=0.61$, df$\approx360$) --- no detectable difference.
-
-Both CIs are consistent with zero and with each other. A post-hoc power check: at the observed per-game variability, 80% power for a $3.4$pp difference would require ${\sim}350$--$800$ games per arm; we ran 240/240 (arena, ${\sim}36$% power) and 246/173 (live, ${\sim}9$% power). The methodological lesson survives, sharpened: a scripted-arena ablation produced a $3.4$pp point estimate whose sign does not establish a field effect, and the field experiment was underpowered for effects of this size. We retained the theoretically-motivated tracker (its live point estimate is non-negative), and we caution against deploying or removing components on the basis of small local ablations alone.
+\paragraph{Tracker ablations.} The opponent-patience tracker was ablated in the scripted arena ($-3.4$pp favoring OFF, 95\% CI $[-0.9, +7.6]$pp) and in a 12-hour live alternation on the production agent ($+1.0$pp favoring ON, 95\% CI $[-2.2, +4.2]$pp) --- neither significant; a post-hoc power check shows 80\% power for a $3.4$pp effect requires ${\sim}350$--$800$ games per arm, versus 240/240 and 246/173 actually run. Both CIs are consistent with zero; we retained the theoretically-motivated tracker. Full statistics, the modification-to-effect summary table, and the run configuration are given in Appendix~\ref{app:components}.
 
 \section{Limitations and reproducibility}
 \paragraph{Limitations.} (1) The opponent-patience tracker and profiles were validated only against the live field and a small scripted population; the arena-vs-field discrepancy (\S5) shows that local evaluation can produce misleading component rankings. (2) Sim-ranking quality degrades under token starvation (degenerate probability outputs); the arm is excluded from headline claims and fails safe. (3) Ratings are strength-adjusted percentiles against a time-varying field, so cross-agent comparisons are confounded by when games were played. (4) The live A/B compares arms by session alternation, not randomization within opponent pools. (5) The persuasion seller's policy optimizes long-horizon credibility over immediate percentile gain; its rating is structurally capped.
 
-\paragraph{Reproducibility.} The agent is pure Python against the public GLEE SDK; game-theoretic components are self-contained and unit-tested (67 tests), with no fine-tuning or private data. The full replay ledger (one JSON record per submitted move, with origin tags and timestamps) and hourly watchdog snapshots are retained and can be re-analyzed end-to-end. LLM calls go to a public inference API with open-weight models; disabling the LLM layer entirely (an environment flag) reproduces the deterministic core. Code and logs are available on request, and the agent's public id links all behavior reported here to the official leaderboard.
+\paragraph{Reproducibility.} The agent is pure Python against the public GLEE SDK; all game-theoretic components are deterministic and unit-tested (67 tests), with no fine-tuning or private data. The full replay ledger (one JSON record per submitted move, with origin tags and timestamps) and hourly watchdog snapshots are retained and re-analyzable end-to-end; disabling the LLM layer (an environment flag) reproduces the deterministic core. Artifact inventory and environment flags are listed in Appendix~\ref{app:repro}.
 
 \section{Conclusion}
 A solver-in-the-loop architecture turns LLM economic agents from prompt-driven generators into auditable decision systems: solvers compute, models communicate, and every deviation between designed and observed behavior is either structurally prevented or measured and documented. The transferable lesson is that the failure modes worth studying are not linguistic.
@@ -187,6 +164,46 @@ C.~Snell et al.
 \newblock ICLR 2025.
 
 \end{thebibliography}
+
+\appendix
+
+\section{Negotiation solver flow}
+\label{app:negotiation}
+The negotiation solver proceeds in three steps. \textbf{(1) Evidence integration.} Only the opponent's own actions update the interval $[\hat{s}, \hat{b}]$ on their private value. When we sell (estimating the buyer): an opponent bid $b$ implies $\hat{s} \leftarrow \max(\hat{s}, 0.85\,b)$ (bids are typically below truthful valuation); their rejection of our ask $a$ implies $\hat{b} \leftarrow \min(\hat{b}, a)$; their acceptance of our ask $a$ implies $\hat{s} \leftarrow \max(\hat{s}, a)$. When we buy, the symmetric rules apply to $\hat{b}$ and $\hat{s}$. \textbf{(2) Pricing.} Inside the ZOPA we price at $\hat{s} + \theta(\hat{b}-\hat{s})$ with capture fraction $\theta$ determined by the surplus-capture threshold, using non-round anchors (round numbers leak valuation precision). Openers use payoff-per-value ratios empirically calibrated from completed field games; with unknown opponents the opener regresses to a fixed 2.1x (sell) / 0.45x (buy) multiple of our value. \textbf{(3) Acceptance and exit.} An individually-rational offer (seller: $p \ge v$; buyer: $p \le v$) is accepted when its capture fraction exceeds a threshold that decays with remaining rounds (thin deal $\gg$ no-deal under percentile scoring), or immediately when the opponent's last two offers moved by less than 5\% (they are at their floor). Walk-away requires a near-certain negative-surplus posterior ($\hat{s} > 1.05\,v$ as buyer). Counters never exceed our own valuation (hard ceiling preventing rounding overshoot).
+
+\section{Component evaluation details}
+\label{app:components}
+\textbf{Run configuration.} Arena arms ran on identical opponent policies (fair, greedy) and paired seeds (base seed 20260825). The LLM arms used the production shell: Groq-hosted openai/gpt-oss-20b, structured JSON prompt per ranking wave, 24 requests/min token bucket (single key), per-call timeout 25s. Of 639 attempted ranking waves, 33 executed successfully and 606 were skipped by the rate limiter (fail-safe by design). The LLM-only baseline prompted the same model with the full public game state (own valuation and discount factor, history, last offer; the opponent's private valuation excluded) and required valid JSON matching the action schema; unparseable or invalid responses forfeited the game (104 of 120; most common error: empty response under the token budget).
+
+\textbf{Staged snapshots.} Displayed ratings (bargaining/negotiation/persuasion) at deployment checkpoints: gen-1 pre-fix 904/958/1048; gen-2 deploy 955/1082/1103; +2h 1048/1196/1139; post-reboot 1408/1401/1145; +3h 1701/1393/1163; +6h 1737/1529/1147; +7h 1954/1471/1223 (bargaining/negotiation/persuasion games: 37--39 at gen-1, ~1,200--1,700 at the last checkpoint).
+
+\textbf{Tracker ablation details.} Scripted arena: 120 games/arm, paired seeds, pooled 240 vs 240, tracker-OFF 0.243 $\pm$ 0.016 vs tracker-ON 0.209 $\pm$ 0.014, difference $+3.4$pp favoring OFF, 95\% CI $[-0.9, +7.6]$pp (Welch $t=1.59$, df$\approx473$). Live field: 12-hour session alternation, tracker-ON 0.498 $\pm$ 0.010 (n=246) vs tracker-OFF 0.488 $\pm$ 0.013 (n=173), difference $+1.0$pp favoring ON, 95\% CI $[-2.2, +4.2]$pp (Welch $t=0.61$, df$\approx360$). Power at the observed variability (per-game SD 0.15--0.17): 80\% power for a 3.4pp effect requires ~350--800 games/arm; the arena run had ~36\% power, the live run ~9\%.
+
+\textbf{Modification-to-effect summary.} Table \ref{tab:mods} maps each major system modification to its evaluation instrument and measured effect.
+
+\begin{table}[h]\centering\small
+\caption{Major modifications, their evaluation instrument, and measured effect.}
+\label{tab:mods}
+\begin{tabular}{p{3.4cm}p{3.6cm}p{5.4cm}}
+\toprule
+Modification & Evaluation & Measured effect \\
+\midrule
+gen-1 $\to$ gen-2 (arithmetic into solvers) & field ratings, staged snapshots & $+62.1$ rating pts/100 games (bargaining); $+18.9$ (negotiation) \\
+Signal-regime buyer (F6 fix) & paired simulation, $n=200$ seeds/arm/type & $+794.0$ pts/game (95\% CI $\pm 86.6$) on constant-signal sellers; $+106.0$ $\pm 55.3$ on informative sellers \\
+LLM ranking shell & arena, 120 games/arm, paired & no measurable change under 24 req/min (33/639 waves executed); fails safe \\
+Opponent-patience tracker & arena + live A/B & arena $-3.4$pp (CI $[-0.9,+7.6]$); live $+1.0$pp (CI $[-2.2,+4.2]$) --- both non-significant \\
+Turn-clock guard & production incident follow-up & 0 latency-attributed timeouts after deployment \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Cheap-talk experiment configuration}
+\label{app:cheapalk}
+The F6 correction was evaluated in a paired local simulation of the buyer side (the seller is scripted; no LLM involved). Configuration: $n=200$ paired seeds per arm per seller type; product quality drawn i.i.d. with $P(\text{high})=0.5$; buyer value $v=300$; price $p=100$ (expected-positive config). Arms: OLD buyer (hard 0.7 deception penalty on constant/lying signals, no regime classification) vs NEW buyer (signal-regime classification, recency-limited penalty, class-conditioned posteriors). Metric: mean per-game buyer payoff difference (NEW minus OLD); the CI is $\pm 1.96$ standard errors of the 200 paired per-seed differences. Results: constant honest seller $+794.0$ (95\% CI $\pm 86.6$); constant liar $+794.0$ (95\% CI $\pm 86.6$, identical by construction --- constant signals carry no information, so the optimal buyer ignores message content entirely); selective (informative) seller $+106.0$ (95\% CI $\pm 55.3$), i.e., the correction has no significant downside where deception signals are genuinely informative.
+
+\section{Reproducibility artifacts}
+\label{app:repro}
+Environment flags: \texttt{GLEE\_USE\_LLM=0} disables the LLM shell entirely (deterministic core); \texttt{GLEE\_ABLATE=opp\_model|profiles|sim|all} selects ablation arms; \texttt{GLEE\_LLM\_FAST} and \texttt{GLEE\_LLM\_STRONG} override model names; \texttt{GLEE\_PROFILES\_PATH} relocates the profile store. Replay ledger schema: one JSON object per submitted move --- game id, full game state, submitted action, origin tag (strategy/fallback), UTC timestamp --- rotating at 64MB. Test suite: 67 tests, including one permanent regression contract per documented live failure (F1--F6). Retained artifacts: the full move ledger (both rotations), hourly watchdog rating snapshots covering the final week, the arena and component-ablation raw per-game results, and the LLM interaction logs. Code and logs are available on request; the agent public id links all reported behavior to the official leaderboard.
 
 \input{checklist.tex}
 
